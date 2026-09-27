@@ -1,0 +1,232 @@
+{
+    "grid": {
+        "root": {
+            "type": "branch",
+            "data": [
+                {
+                    "type": "branch",
+                    "data": [
+                        {
+                            "type": "leaf",
+                            "data": {
+                                "views": [
+                                    "registerMonitor"
+                                ],
+                                "activeView": "registerMonitor",
+                                "id": "2"
+                            },
+                            "size": 297
+                        },
+                        {
+                            "type": "leaf",
+                            "data": {
+                                "views": [
+                                    "dtsVisualizer",
+                                    "registerTracer"
+                                ],
+                                "activeView": "dtsVisualizer",
+                                "id": "3"
+                            },
+                            "size": 679
+                        }
+                    ],
+                    "size": 343
+                },
+                {
+                    "type": "branch",
+                    "data": [
+                        {
+                            "type": "leaf",
+                            "data": {
+                                "views": [
+                                    "rct-controller"
+                                ],
+                                "activeView": "rct-controller",
+                                "id": "8"
+                            },
+                            "size": 100
+                        },
+                        {
+                            "type": "branch",
+                            "data": [
+                                {
+                                    "type": "branch",
+                                    "data": [
+                                        {
+                                            "type": "branch",
+                                            "data": [
+                                                {
+                                                    "type": "leaf",
+                                                    "data": {
+                                                        "views": [
+                                                            "rct-code-view"
+                                                        ],
+                                                        "activeView": "rct-code-view",
+                                                        "id": "10"
+                                                    },
+                                                    "size": 556
+                                                },
+                                                {
+                                                    "type": "leaf",
+                                                    "data": {
+                                                        "views": [
+                                                            "rct-canvas"
+                                                        ],
+                                                        "activeView": "rct-canvas",
+                                                        "id": "15"
+                                                    },
+                                                    "size": 317
+                                                }
+                                            ],
+                                            "size": 438
+                                        },
+                                        {
+                                            "type": "leaf",
+                                            "data": {
+                                                "views": [
+                                                    "rct-breakpoints"
+                                                ],
+                                                "activeView": "rct-breakpoints",
+                                                "id": "6"
+                                            },
+                                            "size": 438
+                                        }
+                                    ],
+                                    "size": 873
+                                },
+                                {
+                                    "type": "branch",
+                                    "data": [
+                                        {
+                                            "type": "leaf",
+                                            "data": {
+                                                "views": [
+                                                    "rct-memory"
+                                                ],
+                                                "activeView": "rct-memory",
+                                                "id": "11"
+                                            },
+                                            "size": 438
+                                        },
+                                        {
+                                            "type": "leaf",
+                                            "data": {
+                                                "views": [
+                                                    "rct-stack"
+                                                ],
+                                                "activeView": "rct-stack",
+                                                "id": "14"
+                                            },
+                                            "size": 438
+                                        }
+                                    ],
+                                    "size": 524
+                                },
+                                {
+                                    "type": "leaf",
+                                    "data": {
+                                        "views": [
+                                            "rct-registers"
+                                        ],
+                                        "activeView": "rct-registers",
+                                        "id": "12"
+                                    },
+                                    "size": 242
+                                }
+                            ],
+                            "size": 876
+                        }
+                    ],
+                    "size": 1639
+                }
+            ],
+            "size": 976
+        },
+        "width": 1982,
+        "height": 976,
+        "orientation": "HORIZONTAL"
+    },
+    "panels": {
+        "registerMonitor": {
+            "id": "registerMonitor",
+            "contentComponent": "registerMonitor",
+            "params": {
+                "_componentName": "registerMonitor"
+            },
+            "title": "Registers"
+        },
+        "dtsVisualizer": {
+            "id": "dtsVisualizer",
+            "contentComponent": "dtsVisualizer",
+            "params": {
+                "_componentName": "dtsVisualizer"
+            },
+            "title": "DTS Visualizer & AI"
+        },
+        "registerTracer": {
+            "id": "registerTracer",
+            "contentComponent": "registerTracer",
+            "params": {
+                "_componentName": "registerTracer"
+            },
+            "title": "Tracer"
+        },
+        "rct-controller": {
+            "id": "rct-controller",
+            "contentComponent": "rct-controller",
+            "params": {
+                "_componentName": "rct-controller"
+            },
+            "title": "RCT Controller"
+        },
+        "rct-code-view": {
+            "id": "rct-code-view",
+            "contentComponent": "rct-code-view",
+            "params": {
+                "_componentName": "rct-code-view"
+            },
+            "title": "RCT Code View"
+        },
+        "rct-canvas": {
+            "id": "rct-canvas",
+            "contentComponent": "rct-canvas",
+            "params": {
+                "_componentName": "rct-canvas"
+            },
+            "title": "RCT Core Canvas"
+        },
+        "rct-breakpoints": {
+            "id": "rct-breakpoints",
+            "contentComponent": "rct-breakpoints",
+            "params": {
+                "_componentName": "rct-breakpoints"
+            },
+            "title": "RCT Breakpoints"
+        },
+        "rct-memory": {
+            "id": "rct-memory",
+            "contentComponent": "rct-memory",
+            "params": {
+                "_componentName": "rct-memory"
+            },
+            "title": "RCT Memory & Hex Dump"
+        },
+        "rct-stack": {
+            "id": "rct-stack",
+            "contentComponent": "rct-stack",
+            "params": {
+                "_componentName": "rct-stack"
+            },
+            "title": "RCT Stack"
+        },
+        "rct-registers": {
+            "id": "rct-registers",
+            "contentComponent": "rct-registers",
+            "params": {
+                "_componentName": "rct-registers"
+            },
+            "title": "RCT Registers & Flags"
+        }
+    },
+    "activeGroup": "8"
+}

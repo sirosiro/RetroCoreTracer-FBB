@@ -1,0 +1,7 @@
+{
+  "id": "rct-controller",
+  "title": "RCT Controller",
+  "entry": "index.js",
+  "icon": "Play",
+  "category": "RetroCoreTracer"
+}

@@ -36,6 +36,8 @@ export default function RetroCoreTracerPane() {
   const [breakpoints, setBreakpoints] = useState([
     { id: 1, type: 'PC_MATCH', condition: '== 0x0003 (EX_TEST)', status: 'Active' }
   ]);
+  const [hitBpId, setHitBpId] = useState(null);
+  const [statusMsg, setStatusMsg] = useState(null);
   const [bpType, setBpType] = useState('PC_MATCH');
   const [bpValue, setBpValue] = useState('');
 
@@ -58,6 +60,35 @@ export default function RetroCoreTracerPane() {
   // スナップショット履歴 (タイムトラベル用)
   const historyRef = useRef([]);
 
+  const checkBreakpoints = useCallback((pcHex) => {
+    if (!breakpoints || breakpoints.length === 0) return null;
+    for (const bp of breakpoints) {
+      if (bp.status === 'Disabled') continue;
+      let targetHex = null;
+      const hexWith0x = bp.condition.match(/0x([0-9a-fA-F]+)/i);
+      if (hexWith0x) {
+        targetHex = hexWith0x[1].padStart(4, '0').toUpperCase();
+      } else {
+        const numMatch = bp.condition.match(/([0-9a-fA-F]{1,4})/);
+        if (numMatch) {
+          targetHex = numMatch[1].padStart(4, '0').toUpperCase();
+        }
+      }
+      if (!targetHex) continue;
+
+      if (bp.type === 'PC_MATCH') {
+        if (pcHex === targetHex) return bp;
+      } else if (bp.type === 'MEM_READ') {
+        const busAddrHex = bus.addr ? bus.addr.replace('0x', '').padStart(4, '0').toUpperCase() : '';
+        if (bus.mreq && bus.rd && busAddrHex === targetHex) return bp;
+      } else if (bp.type === 'MEM_WRITE') {
+        const busAddrHex = bus.addr ? bus.addr.replace('0x', '').padStart(4, '0').toUpperCase() : '';
+        if (bus.mreq && bus.wr && busAddrHex === targetHex) return bp;
+      }
+    }
+    return null;
+  }, [breakpoints, bus]);
+
   // --- ステップ実行 (Forward) ---
   const handleStep = useCallback(() => {
     // 現在状態を履歴に保存
@@ -78,10 +109,46 @@ export default function RetroCoreTracerPane() {
     setCurrentPc(newPc);
     setLastExecuted(nextItem ? nextItem.mnem : 'NOP');
 
-    // 擬似的なレジスタ & バス更新
-    const aVal = (parseInt(regs.af.substring(2, 4), 16) + 1) & 0xFF;
-    const afHex = '0x' + aVal.toString(16).padStart(2, '0').toUpperCase() + '00';
-    setRegs(r => ({ ...r, af: afHex, pc: '0x' + newPc }));
+    let rA = parseInt(regs.af.substring(2, 4), 16) || 0;
+    let rF = parseInt(regs.af.substring(4, 6), 16) || 0;
+    let rB = parseInt(regs.bc.substring(2, 4), 16) || 0;
+    let rC = parseInt(regs.bc.substring(4, 6), 16) || 0;
+    let rD = parseInt(regs.de.substring(2, 4), 16) || 0;
+    let rE = parseInt(regs.de.substring(4, 6), 16) || 0;
+    let rH = parseInt(regs.hl.substring(2, 4), 16) || 0;
+    let rL = parseInt(regs.hl.substring(4, 6), 16) || 0;
+
+    const curItem = program.find(p => parseInt(p.addr, 16) === pcNum) || program[0];
+    if (curItem) {
+      if (curItem.mnem.startsWith('LD A,')) {
+        rA = parseInt(curItem.mnem.split('$')[1], 16) || 0;
+      } else if (curItem.mnem.startsWith('LD B,')) {
+        if (curItem.mnem.includes('$')) rB = parseInt(curItem.mnem.split('$')[1], 16) || 0;
+        else if (curItem.mnem.includes('A')) rB = rA;
+      } else if (curItem.mnem.startsWith('LD C,')) {
+        if (curItem.mnem.includes('$')) rC = parseInt(curItem.mnem.split('$')[1], 16) || 0;
+        else if (curItem.mnem.includes('B')) rC = rB;
+      } else if (curItem.mnem.startsWith('ADD A,')) {
+        const sum = rA + rB;
+        rA = sum & 0xFF;
+        const s = (rA & 0x80) ? 1 : 0;
+        const z = (rA === 0) ? 1 : 0;
+        const h = ((rA & 0x0F) + (rB & 0x0F) > 0x0F) ? 1 : 0;
+        const c = (sum > 0xFF) ? 1 : 0;
+        setFlags({ s, z, h, pv: 0, n: 0, c });
+        rF = (s << 7) | (z << 6) | (h << 4) | c;
+      }
+    }
+
+    const fmt16 = (hi, lo) => '0x' + hi.toString(16).padStart(2, '0').toUpperCase() + lo.toString(16).padStart(2, '0').toUpperCase();
+    setRegs(r => ({
+      ...r,
+      af: fmt16(rA, rF),
+      bc: fmt16(rB, rC),
+      de: fmt16(rD, rE),
+      hl: fmt16(rH, rL),
+      pc: '0x' + newPc
+    }));
 
     // バス光彩アクティブ化
     setBus({
@@ -95,7 +162,17 @@ export default function RetroCoreTracerPane() {
     setTimeout(() => {
       setBus(b => ({ ...b, active: false }));
     }, 200);
-  }, [currentPc, program, regs, flags, bus, stepCount, cycleCount, lastExecuted]);
+
+    const hitBp = checkBreakpoints(newPc);
+    if (hitBp) {
+      setIsRunning(false);
+      setHitBpId(hitBp.id);
+      setStatusMsg(`BP HIT: 0x${newPc}`);
+    } else {
+      setHitBpId(null);
+      setStatusMsg(null);
+    }
+  }, [currentPc, program, regs, flags, bus, stepCount, cycleCount, lastExecuted, checkBreakpoints]);
 
   // --- バックステップ (Time-Travel Undo) ---
   const handleBackstep = useCallback(() => {
@@ -309,7 +386,7 @@ export default function RetroCoreTracerPane() {
       React.createElement('div', { style: S.panel },
         // Core Canvas
         React.createElement('div', { style: S.panelHeader },
-          React.createElement('span', null, 'Core Canvas (Bus Glow)''),
+          React.createElement('span', null, 'Core Canvas (Bus Glow)'),
           React.createElement('div', { style: { display: 'flex', alignItems: 'center', gap: '6px' } },
             React.createElement('span', null, 'Zoom:'),
             React.createElement('input', {

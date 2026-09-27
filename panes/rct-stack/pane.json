@@ -1,0 +1,7 @@
+{
+  "id": "rct-stack",
+  "title": "RCT Stack",
+  "entry": "index.js",
+  "icon": "Layers",
+  "category": "RetroCoreTracer"
+}

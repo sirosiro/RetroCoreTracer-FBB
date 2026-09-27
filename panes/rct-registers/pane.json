@@ -1,0 +1,7 @@
+{
+  "id": "rct-registers",
+  "title": "RCT Registers & Flags",
+  "entry": "index.js",
+  "icon": "Database",
+  "category": "RetroCoreTracer"
+}

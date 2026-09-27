@@ -10,7 +10,7 @@ echo "=================================================="
 # Check if daemon is compiled
 if [ -f "$PLUGIN_DIR/bin/rct_z80_daemon" ]; then
     echo "[Scenario] Starting RCT Z80 Daemon in background..."
-    "$PLUGIN_DIR/bin/rct_z80_daemon" --socket /tmp/rct_z80.sock > /tmp/rct_z80_daemon.log 2>&1 &
+    "$PLUGIN_DIR/bin/rct_z80_daemon" --hex "$PLUGIN_DIR/examples/fibonacci.hex" --socket /tmp/rct_z80.sock > /tmp/rct_z80_daemon.log 2>&1 &
     DAEMON_PID=$!
     trap "kill $DAEMON_PID 2>/dev/null || true" EXIT INT TERM
 fi

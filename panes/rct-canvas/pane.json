@@ -1,0 +1,7 @@
+{
+  "id": "rct-canvas",
+  "title": "RCT Core Canvas",
+  "entry": "index.js",
+  "icon": "Cpu",
+  "category": "RetroCoreTracer"
+}

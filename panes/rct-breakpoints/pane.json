@@ -1,0 +1,7 @@
+{
+  "id": "rct-breakpoints",
+  "title": "RCT Breakpoints",
+  "entry": "index.js",
+  "icon": "ShieldAlert",
+  "category": "RetroCoreTracer"
+}

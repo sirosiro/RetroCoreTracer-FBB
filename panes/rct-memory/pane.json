@@ -1,0 +1,7 @@
+{
+  "id": "rct-memory",
+  "title": "RCT Memory & Hex Dump",
+  "entry": "index.js",
+  "icon": "HardDrive",
+  "category": "RetroCoreTracer"
+}
