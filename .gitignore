@@ -8,3 +8,13 @@ obj_dir/
 *.fst
 .vscode/
 .DS_Store
+
+*.log
+scenario/test_bin
+scenario/.gdbinit
+scenario/fbb_gdb.py
+
+*.log
+scenario/test_bin
+scenario/.gdbinit
+scenario/fbb_gdb.py
