@@ -4,6 +4,8 @@
 
 クリーンルーム（完全スクラッチ）から設計された Verilog-2001 Z80 CPU コア、C++ サイクルシミュレータ、決定論的タイムトラベル（Undo / Backstepping）エンジン、および Web ダッシュボード統合の 4 カラム・リッチスタジオ UI を提供します。F-BB 本体のコードを 1 行も変更することなく、完全なプラグアンドプレイを実現しています。
 
+![RetroCoreTracer for F-BB AroundView Dashboard](assets/dashboard.gif)
+
 ---
 
 ## 主な特徴 (Key Features)
