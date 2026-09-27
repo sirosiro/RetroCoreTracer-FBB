@@ -1,0 +1,11 @@
+{
+  "id": "retro-core-tracer",
+  "title": "RetroCoreTracer (Z80)",
+  "icon": "Cpu",
+  "category": "Retro Computing & Architecture",
+  "entry": "index.js",
+  "defaultSize": {
+    "width": 800,
+    "height": 550
+  }
+}

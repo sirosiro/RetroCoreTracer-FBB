@@ -1,0 +1,10 @@
+build/
+bin/
+obj_dir/
+*.o
+*.a
+*.so
+*.vcd
+*.fst
+.vscode/
+.DS_Store

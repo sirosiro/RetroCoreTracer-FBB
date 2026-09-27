@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "name": "fbb-plugin-rct-z80",
+  "vendor": "sirosiro",
+  "version": "0.1.0",
+  "peripherals": [
+    {
+      "bus": "raw_pins",
+      "compatible": "sirosiro,z80-retro-tracer",
+      "binary": "bin/rct_z80_daemon",
+      "default_args": [
+        "--socket",
+        "{socket_path}"
+      ],
+      "pane_dir": "pane",
+      "ui_widget": {
+        "title": "RetroCoreTracer Z80",
+        "description": "Visual RTL CPU Tracer with Backstepping & Dynamic Bus Glow"
+      }
+    }
+  ]
+}
