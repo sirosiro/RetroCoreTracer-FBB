@@ -184,12 +184,19 @@ F-BB のシミュレーションフレームワーク（C-Shim + Verilator + MMI
 ```
 
 ### 5. Web ダッシュボードによるインタラクティブ実行
-統合ランナーを起動し、ブラウザからビジュアルトレーサーを使用します。
+統合ランナーを起動し、ブラウザからビジュアルトレーサーを使用します。`start_lab.sh` の第2引数に対象の `.hex` ファイルを指定することで、任意の Z80 プログラムを Code View およびシミュレータへ即時ロードして実行可能です。
 
 ```bash
+# 1. 任意の HEX ファイル（ループテスト）を指定して起動
+./start_lab.sh /workspaces/RetroCoreTracer-FBB/scenario/ examples/z80_loop_test.hex
+
+# 2. スタック・サブルーチン呼出テストを指定して起動
+./start_lab.sh /workspaces/RetroCoreTracer-FBB/scenario/ examples/z80_stack_test.hex
+
+# 3. 引数を省略した場合は、デフォルトでフィボナッチ数列デモ (fibonacci.hex) が起動します
 ./start_lab.sh /workspaces/RetroCoreTracer-FBB/scenario/
 ```
-ブラウザで `http://localhost:8080` を開き、上部メニューの「Add-ons & Robotics」または「Custom Panes」から **RetroCoreTracer (Z80)** ペインを選択すると、フルスタジオ UI が立ち上がります。
+ブラウザで `http://localhost:8080` を開き、上部メニューの「Add-ons & Robotics」または「Custom Panes」から **RetroCoreTracer (Z80)** ペインを選択すると、フルスタジオ UI が立ち上がり、指定したプログラムの逆アセンブラ行・レジスタ・メモリが自動同期されます。
 
 ---
 

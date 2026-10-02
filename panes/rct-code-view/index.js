@@ -65,6 +65,31 @@ function getRctStore() {
     };
 
     const listeners = new Set();
+    // Automatically fetch active HEX program if provided by start_lab.sh
+    if (typeof fetch !== 'undefined') {
+      fetch('/api/scenario/rct-program')
+        .then(res => res.ok ? res.json() : null)
+        .then(data => {
+          if (data && data.program && data.program.length > 0) {
+            state.program = data.program;
+            if (data.memory && data.memory.length > 0) {
+              for (let i = 0; i < data.memory.length && i < 65536; i++) {
+                state.memory[i] = data.memory[i];
+              }
+            }
+            if (data.startPc) {
+              state.currentPc = data.startPc;
+              state.regs.pc = '0x' + data.startPc;
+            }
+            if (data.program[0]) {
+              state.lastExecuted = data.program[0].mnem;
+            }
+            notify('local');
+          }
+        })
+        .catch(() => {});
+    }
+
     let runTimer = null;
 
     function notify(origin) {

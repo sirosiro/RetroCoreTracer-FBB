@@ -55,6 +55,26 @@ export default function RetroCoreTracerPane() {
   ], []);
 
   const [program, setProgram] = useState(initialProgram);
+  useEffect(() => {
+    if (typeof fetch !== 'undefined') {
+      fetch('/api/scenario/rct-program')
+        .then(res => res.ok ? res.json() : null)
+        .then(data => {
+          if (data && data.program && data.program.length > 0) {
+            setProgram(data.program);
+            if (data.startPc) {
+              setCurrentPc(data.startPc);
+              setRegs(r => ({ ...r, pc: '0x' + data.startPc }));
+            }
+            if (data.program[0]) {
+              setLastExecuted(data.program[0].mnem);
+            }
+          }
+        })
+        .catch(() => {});
+    }
+  }, []);
+
   const [currentPc, setCurrentPc] = useState('0000');
 
   // スナップショット履歴 (タイムトラベル用)

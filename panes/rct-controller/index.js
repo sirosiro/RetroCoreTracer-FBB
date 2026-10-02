@@ -65,6 +65,31 @@ function getRctStore() {
     };
 
     const listeners = new Set();
+    // Automatically fetch active HEX program if provided by start_lab.sh
+    if (typeof fetch !== 'undefined') {
+      fetch('/api/scenario/rct-program')
+        .then(res => res.ok ? res.json() : null)
+        .then(data => {
+          if (data && data.program && data.program.length > 0) {
+            state.program = data.program;
+            if (data.memory && data.memory.length > 0) {
+              for (let i = 0; i < data.memory.length && i < 65536; i++) {
+                state.memory[i] = data.memory[i];
+              }
+            }
+            if (data.startPc) {
+              state.currentPc = data.startPc;
+              state.regs.pc = '0x' + data.startPc;
+            }
+            if (data.program[0]) {
+              state.lastExecuted = data.program[0].mnem;
+            }
+            notify('local');
+          }
+        })
+        .catch(() => {});
+    }
+
     let runTimer = null;
 
     function notify(origin) {
@@ -136,6 +161,9 @@ function getRctStore() {
           else if (dest === 'E') rE = srcVal & 0xFF;
           else if (dest === 'H') rH = srcVal & 0xFF;
           else if (dest === 'L') rL = srcVal & 0xFF;
+          else if (dest === 'BC') { rB = (srcVal >> 8) & 0xFF; rC = srcVal & 0xFF; }
+          else if (dest === 'DE') { rD = (srcVal >> 8) & 0xFF; rE = srcVal & 0xFF; }
+          else if (dest === 'HL') { rH = (srcVal >> 8) & 0xFF; rL = srcVal & 0xFF; }
         } else if (curItem.mnem === 'ADD') {
           const src = curItem.src.trim();
           let srcVal = 0;
@@ -164,6 +192,47 @@ function getRctStore() {
             const loopItem = state.program.find(p => p.label && p.label.startsWith('LOOP'));
             nextPcNum = loopItem ? parseInt(loopItem.addr, 16) : 0x0007;
           }
+        } else if (curItem.mnem === 'INC') {
+          const dest = curItem.dest.replace(',', '').trim();
+          if (dest === 'A') { rA = (rA + 1) & 0xFF; }
+          else if (dest === 'B') { rB = (rB + 1) & 0xFF; }
+          else if (dest === 'C') { rC = (rC + 1) & 0xFF; }
+          const val = dest === 'A' ? rA : (dest === 'B' ? rB : rC);
+          const z = val === 0 ? 1 : 0;
+          const s = (val & 0x80) ? 1 : 0;
+          state.flags = { ...state.flags, s, z };
+          tCycles = 4;
+        } else if (curItem.mnem === 'DEC') {
+          const dest = curItem.dest.replace(',', '').trim();
+          if (dest === 'A') { rA = (rA - 1) & 0xFF; }
+          else if (dest === 'B') { rB = (rB - 1) & 0xFF; }
+          else if (dest === 'C') { rC = (rC - 1) & 0xFF; }
+          const val = dest === 'A' ? rA : (dest === 'B' ? rB : rC);
+          const z = val === 0 ? 1 : 0;
+          const s = (val & 0x80) ? 1 : 0;
+          state.flags = { ...state.flags, s, z, n: 1 };
+          tCycles = 4;
+        } else if (curItem.mnem === 'DJNZ') {
+          rB = (rB - 1) & 0xFF;
+          tCycles = 13;
+          if (rB !== 0) {
+            const targetHex = curItem.dest.replace('$', '').trim();
+            const targetNum = parseInt(targetHex, 16);
+            if (!isNaN(targetNum)) nextPcNum = targetNum;
+          } else {
+            tCycles = 8;
+          }
+        } else if (curItem.mnem === 'CALL') {
+          tCycles = 17;
+          const targetHex = curItem.dest.replace('$', '').trim();
+          const targetNum = parseInt(targetHex, 16);
+          if (!isNaN(targetNum)) nextPcNum = targetNum;
+        } else if (curItem.mnem === 'RET') {
+          tCycles = 10;
+        } else if (curItem.mnem === 'PUSH') {
+          tCycles = 11;
+        } else if (curItem.mnem === 'POP') {
+          tCycles = 10;
         } else if (curItem.mnem === 'HALT') {
           nextPcNum = pcNum;
           tCycles = 4;
