@@ -148,7 +148,7 @@ SUM:                                18            242            128           1
 Verilator と CMake を使用して、RTL のコンパイルおよびシミュレータバイナリをビルドします。
 
 ```bash
-cd /workspaces/RetroCoreTracer-FBB
+cd <RetroCoreTracer-FBBのディレクトリ>
 cmake -B build
 cmake --build build
 ```
@@ -164,23 +164,29 @@ cmake --build build
 F-BB の統一 CLI を使用してプラグインの認識状況と適合性を確認します。
 
 ```bash
-cd /workspaces/FPGA-BoardlessBench
+cd <FPGA-BoardlessBenchのディレクトリ>
 
 # プラグイン一覧の表示 (Hybrid / Ready (Binary) として表示されます)
-./bin/fbb plugin list
+fbb plugin list
 
 # PPA プラグイン仕様検証
-./bin/fbb plugin validate ~/.fbb/plugins/rct-z80
+fbb plugin validate ../RetroCoreTracer-FBB
+# （または fbb plugin install で導入済みの場合は）
+# fbb plugin validate ~/.fbb/plugins/RetroCoreTracer-FBB
 
 # DPPA 動的ペイン仕様検証
-./bin/fbb plugin validate ~/.fbb/plugins/rct-z80/pane
+fbb plugin validate ../RetroCoreTracer-FBB/pane
+# （または fbb plugin install で導入済みの場合は）
+# fbb plugin validate ~/.fbb/plugins/RetroCoreTracer-FBB/pane
 ```
 
 ### 4. F-BB テストランナーによるエンドツーエンド検証
 F-BB のシミュレーションフレームワーク（C-Shim + Verilator + MMIO）を通じてシナリオを自動実行します。
 
 ```bash
-./bin/fbb test /workspaces/RetroCoreTracer-FBB/scenario/
+fbb test ../RetroCoreTracer-FBB/scenario/
+# （または fbb plugin install で導入済みの場合は）
+# fbb test ~/.fbb/plugins/RetroCoreTracer-FBB/scenario/
 ```
 
 ### 5. Web ダッシュボードによるインタラクティブ実行
@@ -188,13 +194,13 @@ F-BB のシミュレーションフレームワーク（C-Shim + Verilator + MMI
 
 ```bash
 # 1. 任意の HEX ファイル（ループテスト）を指定して起動
-./start_lab.sh /workspaces/RetroCoreTracer-FBB/scenario/ examples/z80_loop_test.hex
+./start_lab.sh ../RetroCoreTracer-FBB/scenario/ examples/z80_loop_test.hex
 
 # 2. スタック・サブルーチン呼出テストを指定して起動
-./start_lab.sh /workspaces/RetroCoreTracer-FBB/scenario/ examples/z80_stack_test.hex
+./start_lab.sh ../RetroCoreTracer-FBB/scenario/ examples/z80_stack_test.hex
 
 # 3. 引数を省略した場合は、デフォルトでフィボナッチ数列デモ (fibonacci.hex) が起動します
-./start_lab.sh /workspaces/RetroCoreTracer-FBB/scenario/
+./start_lab.sh ../RetroCoreTracer-FBB/scenario/
 ```
 ブラウザで `http://localhost:8080` を開き、上部メニューの「Add-ons & Robotics」または「Custom Panes」から **RetroCoreTracer (Z80)** ペインを選択すると、フルスタジオ UI が立ち上がり、指定したプログラムの逆アセンブラ行・レジスタ・メモリが自動同期されます。
 
