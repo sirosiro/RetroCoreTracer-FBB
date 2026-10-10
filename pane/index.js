@@ -57,7 +57,7 @@ export default function RetroCoreTracerPane() {
   const [program, setProgram] = useState(initialProgram);
   useEffect(() => {
     if (typeof fetch !== 'undefined') {
-      fetch('/api/scenario/rct-program')
+      fetch('/api/file?path=/tmp/rct_active_program.json')
         .then(res => res.ok ? res.json() : null)
         .then(data => {
           if (data && data.program && data.program.length > 0) {

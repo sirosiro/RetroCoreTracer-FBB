@@ -67,7 +67,7 @@ function getRctStore() {
     const listeners = new Set();
     // Automatically fetch active HEX program if provided by start_lab.sh
     if (typeof fetch !== 'undefined') {
-      fetch('/api/scenario/rct-program')
+      fetch('/api/file?path=/tmp/rct_active_program.json')
         .then(res => res.ok ? res.json() : null)
         .then(data => {
           if (data && data.program && data.program.length > 0) {
