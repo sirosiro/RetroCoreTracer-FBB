@@ -156,6 +156,37 @@ function getRctStore() {
       state.lastOpType = curItem ? curItem.mnem : 'NOP';
       state.lastOpDesc = null;
 
+      const resolveJumpTarget = (item, candidate) => {
+        const candidates = [candidate, item && item.dest, item && item.src].filter(Boolean);
+        for (let cand of candidates) {
+          const cleaned = cand.replace('$', '').replace('(', '').replace(')', '').replace(',', '').trim();
+          // 1. Try finding by label in program
+          const match = state.program.find(p => {
+            if (!p.label) return false;
+            const l = p.label.replace(':', '').trim();
+            return l.toLowerCase() === cleaned.toLowerCase();
+          });
+          if (match) {
+            const a = parseInt(match.addr, 16);
+            if (!isNaN(a)) return a;
+          }
+          // 2. Try hex address (e.g. 0005, 0x0005, $0005)
+          if (/^(0x)?[0-9a-fA-F]{1,4}$/i.test(cleaned)) {
+            const a = parseInt(cleaned.replace(/^0x/i, ''), 16);
+            if (!isNaN(a)) return a;
+          }
+          // 3. Try relative offset e.g. (-5), +5, -5
+          const offMatch = cand.match(/^[\(\[]?\s*([+-]?\d+)\s*[\)\]]?$/);
+          if (offMatch) {
+            const offset = parseInt(offMatch[1], 10);
+            const instrLen = item && item.bytes ? item.bytes.trim().split(/\s+/).length : 2;
+            const basePc = item && item.addr ? parseInt(item.addr, 16) : pcNum;
+            return (basePc + instrLen + offset) & 0xFFFF;
+          }
+        }
+        return NaN;
+      };
+
       if (curItem) {
         if (curItem.mnem === 'NOP') {
           tCycles = 4;
@@ -213,21 +244,153 @@ function getRctStore() {
           const pv = (((oldA ^ ~srcVal) & (oldA ^ rA)) & 0x80) ? 1 : 0;
           state.flags = { s, z, h, pv, n: 0, c };
           rF = (s << 7) | (z << 6) | (h << 4) | (pv << 2) | c;
+        } else if (curItem.mnem === 'SUB') {
+          const operand = (curItem.dest || curItem.src || '').replace(',', '').trim();
+          let srcVal = 0;
+          if (operand === 'B') srcVal = rB;
+          else if (operand === 'C') srcVal = rC;
+          else if (operand === 'D') srcVal = rD;
+          else if (operand === 'E') srcVal = rE;
+          else if (operand === 'H') srcVal = rH;
+          else if (operand === 'L') srcVal = rL;
+          else if (operand === 'A') srcVal = rA;
+          else if (operand.startsWith('$')) srcVal = parseInt(operand.replace('$', '0x'), 16);
+
+          const oldA = rA;
+          const diff = rA - srcVal;
+          rA = (diff < 0 ? diff + 256 : diff) & 0xFF;
+          tCycles = 4;
+
+          const s = (rA & 0x80) ? 1 : 0;
+          const z = (rA === 0) ? 1 : 0;
+          const h = ((oldA & 0x0F) < (srcVal & 0x0F)) ? 1 : 0;
+          const c = (diff < 0) ? 1 : 0;
+          const pv = (((oldA ^ srcVal) & (oldA ^ rA)) & 0x80) ? 1 : 0;
+          state.flags = { s, z, h, pv, n: 1, c };
+          rF = (s << 7) | (z << 6) | (h << 4) | (pv << 2) | (1 << 1) | c;
         } else if (curItem.mnem === 'JR') {
-          tCycles = 12;
-          if (curItem.src.includes('-5') || curItem.dest === 'LOOP') {
-            const loopItem = state.program.find(p => p.label && p.label.startsWith('LOOP'));
-            nextPcNum = loopItem ? parseInt(loopItem.addr, 16) : 0x0007;
+          let shouldJump = true;
+          let targetCandidate = '';
+          const d = (curItem.dest || '').trim();
+          const s = (curItem.src || '').trim();
+
+          if (/^NZ,\s*(.*)$/i.test(d)) {
+            shouldJump = !state.flags.z;
+            targetCandidate = d.replace(/^NZ,\s*/i, '') || s;
+          } else if (/^NZ$/i.test(d)) {
+            shouldJump = !state.flags.z;
+            targetCandidate = s;
+          } else if (/^Z,\s*(.*)$/i.test(d)) {
+            shouldJump = !!state.flags.z;
+            targetCandidate = d.replace(/^Z,\s*/i, '') || s;
+          } else if (/^Z$/i.test(d)) {
+            shouldJump = !!state.flags.z;
+            targetCandidate = s;
+          } else if (/^NC,\s*(.*)$/i.test(d)) {
+            shouldJump = !state.flags.c;
+            targetCandidate = d.replace(/^NC,\s*/i, '') || s;
+          } else if (/^NC$/i.test(d)) {
+            shouldJump = !state.flags.c;
+            targetCandidate = s;
+          } else if (/^C,\s*(.*)$/i.test(d)) {
+            shouldJump = !!state.flags.c;
+            targetCandidate = d.replace(/^C,\s*/i, '') || s;
+          } else if (/^C$/i.test(d)) {
+            shouldJump = !!state.flags.c;
+            targetCandidate = s;
           } else {
-            const targetHex = (curItem.src || curItem.dest).replace('$', '').replace('(', '').replace(')', '').trim();
-            const targetNum = parseInt(targetHex, 16);
+            shouldJump = true;
+            targetCandidate = d || s;
+          }
+
+          if (shouldJump) {
+            tCycles = 12;
+            const targetNum = resolveJumpTarget(curItem, targetCandidate);
             if (!isNaN(targetNum)) nextPcNum = targetNum;
+          } else {
+            tCycles = 7;
           }
         } else if (curItem.mnem === 'JP') {
-          tCycles = 10;
-          const targetHex = curItem.dest.replace('$', '').trim();
-          const targetNum = parseInt(targetHex, 16);
-          if (!isNaN(targetNum)) nextPcNum = targetNum;
+          let shouldJump = true;
+          let targetCandidate = '';
+          const d = (curItem.dest || '').trim();
+          const s = (curItem.src || '').trim();
+
+          if (/^NZ,\s*(.*)$/i.test(d)) {
+            shouldJump = !state.flags.z;
+            targetCandidate = d.replace(/^NZ,\s*/i, '') || s;
+          } else if (/^NZ$/i.test(d)) {
+            shouldJump = !state.flags.z;
+            targetCandidate = s;
+          } else if (/^Z,\s*(.*)$/i.test(d)) {
+            shouldJump = !!state.flags.z;
+            targetCandidate = d.replace(/^Z,\s*/i, '') || s;
+          } else if (/^Z$/i.test(d)) {
+            shouldJump = !!state.flags.z;
+            targetCandidate = s;
+          } else if (/^NC,\s*(.*)$/i.test(d)) {
+            shouldJump = !state.flags.c;
+            targetCandidate = d.replace(/^NC,\s*/i, '') || s;
+          } else if (/^NC$/i.test(d)) {
+            shouldJump = !state.flags.c;
+            targetCandidate = s;
+          } else if (/^C,\s*(.*)$/i.test(d)) {
+            shouldJump = !!state.flags.c;
+            targetCandidate = d.replace(/^C,\s*/i, '') || s;
+          } else if (/^C$/i.test(d)) {
+            shouldJump = !!state.flags.c;
+            targetCandidate = s;
+          } else if (/^PO,\s*(.*)$/i.test(d)) {
+            shouldJump = !state.flags.pv;
+            targetCandidate = d.replace(/^PO,\s*/i, '') || s;
+          } else if (/^PO$/i.test(d)) {
+            shouldJump = !state.flags.pv;
+            targetCandidate = s;
+          } else if (/^PE,\s*(.*)$/i.test(d)) {
+            shouldJump = !!state.flags.pv;
+            targetCandidate = d.replace(/^PE,\s*/i, '') || s;
+          } else if (/^PE$/i.test(d)) {
+            shouldJump = !!state.flags.pv;
+            targetCandidate = s;
+          } else if (/^P,\s*(.*)$/i.test(d)) {
+            shouldJump = !state.flags.s;
+            targetCandidate = d.replace(/^P,\s*/i, '') || s;
+          } else if (/^P$/i.test(d)) {
+            shouldJump = !state.flags.s;
+            targetCandidate = s;
+          } else if (/^M,\s*(.*)$/i.test(d)) {
+            shouldJump = !!state.flags.s;
+            targetCandidate = d.replace(/^M,\s*/i, '') || s;
+          } else if (/^M$/i.test(d)) {
+            shouldJump = !!state.flags.s;
+            targetCandidate = s;
+          } else if (d === '(HL)' || d === 'HL') {
+            shouldJump = true;
+            nextPcNum = (rH << 8) | rL;
+            tCycles = 4;
+            targetCandidate = null;
+          } else if (d === '(IX)' || d === 'IX') {
+            shouldJump = true;
+            nextPcNum = parseInt(state.regs.ix.replace('0x', ''), 16) || 0;
+            tCycles = 8;
+            targetCandidate = null;
+          } else if (d === '(IY)' || d === 'IY') {
+            shouldJump = true;
+            nextPcNum = parseInt(state.regs.iy.replace('0x', ''), 16) || 0;
+            tCycles = 8;
+            targetCandidate = null;
+          } else {
+            shouldJump = true;
+            targetCandidate = d || s;
+          }
+
+          if (targetCandidate) {
+            tCycles = 10;
+            if (shouldJump) {
+              const targetNum = resolveJumpTarget(curItem, targetCandidate);
+              if (!isNaN(targetNum)) nextPcNum = targetNum;
+            }
+          }
         } else if (curItem.mnem === 'INC') {
           const dest = curItem.dest.replace(',', '').trim();
           if (dest === 'A') { rA = (rA + 1) & 0xFF; }
@@ -250,10 +413,9 @@ function getRctStore() {
           tCycles = 4;
         } else if (curItem.mnem === 'DJNZ') {
           rB = (rB - 1) & 0xFF;
-          tCycles = 13;
           if (rB !== 0) {
-            const targetHex = curItem.dest.replace('$', '').trim();
-            const targetNum = parseInt(targetHex, 16);
+            tCycles = 13;
+            const targetNum = resolveJumpTarget(curItem, curItem.dest || curItem.src);
             if (!isNaN(targetNum)) nextPcNum = targetNum;
           } else {
             tCycles = 8;
@@ -304,31 +466,79 @@ function getRctStore() {
           state.lastOpType = 'POP';
           state.lastOpDesc = `POP ${dest} <= 0x${val16.toString(16).padStart(4, '0').toUpperCase()} (from [0x${((spNum - 2) & 0xFFFF).toString(16).padStart(4, '0').toUpperCase()}])`;
         } else if (curItem.mnem === 'CALL') {
-          tCycles = 17;
-          let spNum = getSp();
-          const retAddr = nextPcNum;
-          const hi = (retAddr >> 8) & 0xFF;
-          const lo = retAddr & 0xFF;
-          const addrHi = (spNum - 1) & 0xFFFF;
-          const addrLo = (spNum - 2) & 0xFFFF;
-          memChanges.push({ addr: addrHi, oldVal: state.memory[addrHi] });
-          memChanges.push({ addr: addrLo, oldVal: state.memory[addrLo] });
-          state.memory[addrHi] = hi;
-          state.memory[addrLo] = lo;
-          spNum = addrLo;
-          state.regs.sp = '0x' + spNum.toString(16).padStart(4, '0').toUpperCase();
+          let shouldCall = true;
+          let targetCandidate = '';
+          const d = (curItem.dest || '').trim();
+          const s = (curItem.src || '').trim();
 
-          const targetHex = curItem.dest.replace('$', '').trim();
-          const targetNum = parseInt(targetHex, 16);
-          if (!isNaN(targetNum)) nextPcNum = targetNum;
+          if (/^NZ,\s*(.*)$/i.test(d)) {
+            shouldCall = !state.flags.z;
+            targetCandidate = d.replace(/^NZ,\s*/i, '') || s;
+          } else if (/^NZ$/i.test(d)) {
+            shouldCall = !state.flags.z;
+            targetCandidate = s;
+          } else if (/^Z,\s*(.*)$/i.test(d)) {
+            shouldCall = !!state.flags.z;
+            targetCandidate = d.replace(/^Z,\s*/i, '') || s;
+          } else if (/^Z$/i.test(d)) {
+            shouldCall = !!state.flags.z;
+            targetCandidate = s;
+          } else if (/^NC,\s*(.*)$/i.test(d)) {
+            shouldCall = !state.flags.c;
+            targetCandidate = d.replace(/^NC,\s*/i, '') || s;
+          } else if (/^NC$/i.test(d)) {
+            shouldCall = !state.flags.c;
+            targetCandidate = s;
+          } else if (/^C,\s*(.*)$/i.test(d)) {
+            shouldCall = !!state.flags.c;
+            targetCandidate = d.replace(/^C,\s*/i, '') || s;
+          } else if (/^C$/i.test(d)) {
+            shouldCall = !!state.flags.c;
+            targetCandidate = s;
+          } else {
+            shouldCall = true;
+            targetCandidate = d || s;
+          }
+
+          if (shouldCall) {
+            tCycles = 17;
+            let spNum = getSp();
+            const retAddr = nextPcNum;
+            const hi = (retAddr >> 8) & 0xFF;
+            const lo = retAddr & 0xFF;
+            const addrHi = (spNum - 1) & 0xFFFF;
+            const addrLo = (spNum - 2) & 0xFFFF;
+            memChanges.push({ addr: addrHi, oldVal: state.memory[addrHi] });
+            memChanges.push({ addr: addrLo, oldVal: state.memory[addrLo] });
+            state.memory[addrHi] = hi;
+            state.memory[addrLo] = lo;
+            spNum = addrLo;
+            state.regs.sp = '0x' + spNum.toString(16).padStart(4, '0').toUpperCase();
+
+            const targetNum = resolveJumpTarget(curItem, targetCandidate);
+            if (!isNaN(targetNum)) nextPcNum = targetNum;
+          } else {
+            tCycles = 10;
+          }
         } else if (curItem.mnem === 'RET') {
-          tCycles = 10;
-          let spNum = getSp();
-          const lo = state.memory[spNum] || 0;
-          const hi = state.memory[(spNum + 1) & 0xFFFF] || 0;
-          spNum = (spNum + 2) & 0xFFFF;
-          state.regs.sp = '0x' + spNum.toString(16).padStart(4, '0').toUpperCase();
-          nextPcNum = (hi << 8) | lo;
+          let shouldRet = true;
+          const d = (curItem.dest || '').trim();
+          if (/^NZ$/i.test(d)) shouldRet = !state.flags.z;
+          else if (/^Z$/i.test(d)) shouldRet = !!state.flags.z;
+          else if (/^NC$/i.test(d)) shouldRet = !state.flags.c;
+          else if (/^C$/i.test(d)) shouldRet = !!state.flags.c;
+
+          if (shouldRet) {
+            tCycles = 10;
+            let spNum = getSp();
+            const lo = state.memory[spNum] || 0;
+            const hi = state.memory[(spNum + 1) & 0xFFFF] || 0;
+            spNum = (spNum + 2) & 0xFFFF;
+            state.regs.sp = '0x' + spNum.toString(16).padStart(4, '0').toUpperCase();
+            nextPcNum = (hi << 8) | lo;
+          } else {
+            tCycles = 5;
+          }
         } else if (curItem.mnem === 'HALT') {
           nextPcNum = pcNum;
           tCycles = 4;
