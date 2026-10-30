@@ -275,6 +275,9 @@ void Z80Daemon::handle_client(int client_fd) {
             resp = current_state().to_json() + "\n";
         }
 
-        write(client_fd, resp.c_str(), resp.length());
+        ssize_t w = write(client_fd, resp.c_str(), resp.length());
+        if (w < 0) {
+            break;
+        }
     }
 }

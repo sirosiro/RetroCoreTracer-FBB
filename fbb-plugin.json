@@ -3,6 +3,7 @@
   "name": "fbb-plugin-rct-z80",
   "vendor": "sirosiro",
   "version": "0.1.0",
+  "description": "Visual RTL Z80 CPU Tracer with Backstepping & Dynamic Bus Glow for FPGA-BoardlessBench",
   "peripherals": [
     {
       "bus": "raw_pins",
@@ -17,6 +18,48 @@
         "title": "RetroCoreTracer Z80",
         "description": "Visual RTL CPU Tracer with Backstepping & Dynamic Bus Glow"
       }
+    }
+  ],
+  "panes": [
+    {
+      "id": "retro-core-tracer",
+      "title": "RetroCoreTracer (Z80)",
+      "entry": "pane/index.js"
+    },
+    {
+      "id": "rct-controller",
+      "title": "RCT Controller",
+      "entry": "panes/rct-controller/index.js"
+    },
+    {
+      "id": "rct-code-view",
+      "title": "RCT Code View",
+      "entry": "panes/rct-code-view/index.js"
+    },
+    {
+      "id": "rct-canvas",
+      "title": "RCT Core Canvas",
+      "entry": "panes/rct-canvas/index.js"
+    },
+    {
+      "id": "rct-registers",
+      "title": "RCT Registers & Flags",
+      "entry": "panes/rct-registers/index.js"
+    },
+    {
+      "id": "rct-stack",
+      "title": "RCT Stack",
+      "entry": "panes/rct-stack/index.js"
+    },
+    {
+      "id": "rct-memory",
+      "title": "RCT Memory & Hex Dump",
+      "entry": "panes/rct-memory/index.js"
+    },
+    {
+      "id": "rct-breakpoints",
+      "title": "RCT Breakpoints",
+      "entry": "panes/rct-breakpoints/index.js"
     }
   ]
 }
