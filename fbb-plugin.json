@@ -4,6 +4,20 @@
   "vendor": "sirosiro",
   "version": "0.1.0",
   "description": "Visual RTL Z80 CPU Tracer with Backstepping & Dynamic Bus Glow for FPGA-BoardlessBench",
+  "commands": [
+    {
+      "desc": "Run Automated RTL End-to-End Regression Test",
+      "cmd": "fbb test {PLUGIN_DIR}/scenario/"
+    },
+    {
+      "desc": "Launch Interactive Studio with Loop Test Demo",
+      "cmd": "fbb lab {PLUGIN_DIR}/scenario/ examples/z80_loop_test.hex"
+    },
+    {
+      "desc": "Launch Interactive Studio with Fibonacci Demo (Default)",
+      "cmd": "fbb lab {PLUGIN_DIR}/scenario/"
+    }
+  ],
   "peripherals": [
     {
       "bus": "raw_pins",
