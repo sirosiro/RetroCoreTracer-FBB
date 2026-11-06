@@ -65,5 +65,5 @@ if [ "$FBB_ACTIVE" = "1" ]; then
     ./test_bin
 else
     # Direct execution or standalone lab
-    "$SCRIPT_DIR/../../FPGA-BoardlessBench/scenario_runner.sh" "$SCRIPT_DIR" "$@"
+    "$SCRIPT_DIR/../../FPGA-BoardlessBench/tests/scenario_runner.sh" "$SCRIPT_DIR" "$@"
 fi

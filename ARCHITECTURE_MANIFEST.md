@@ -25,7 +25,7 @@
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
-│ [Layer 1: DPPA Web Studio] (pane/)                                     │
+│ [Layer 1: DPPA Web Studio] (panes/ & pane/)                            │
 │  React 19 / Dockview / Canvas. Zero-Build Native ES Module.            │
 │  CodeView, MemoryMap, CoreCanvas, Breakpoints, Flags, HexDump, Regs   │
 └──────────────────────────────────▲─────────────────────────────────────┘
