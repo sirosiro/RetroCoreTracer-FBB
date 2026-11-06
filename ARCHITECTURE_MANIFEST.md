@@ -43,7 +43,7 @@
 └────────────────────────────────────────────────────────────────────────┘
 ┌────────────────────────────────────────────────────────────────────────┐
 │ [Layer 4: Standalone Scenario] (scenario/)                             │
-│  config.dts (Device Tree), run.sh (Standalone Launcher)                │
+│  config.gtr / config.dts (GTR / Device Tree), run.sh (Standalone Launcher) │
 │  F-BB の ./start_lab.sh から直接指定して起動可能                       │
 └────────────────────────────────────────────────────────────────────────┘
 ```
@@ -139,4 +139,4 @@ CIP の規範に基づき、すべてのソースコード（Verilog, C++, React
 ### ADR #003: F-BB 本体リポジトリへの侵入ゼロ（完全外部シナリオ起動）
 - **Status:** 承認済 (Accepted)
 - **Context:** F-BB のリポジトリを一切汚さず、PPA/DPPA のサードパーティ開発者体験を実証する。
-- **Decision:** シナリオ（`config.dts`, `run.sh`）は `RetroCoreTracer-FBB/scenario/` に自己完結させ、`./start_lab.sh <absolute_path>` で直接起動する。
+- **Decision:** シナリオ（`config.gtr`, `config.dts`, `run.sh`）は `RetroCoreTracer-FBB/scenario/` に自己完結させ、`./start_lab.sh <absolute_path>` で直接起動する。

@@ -48,7 +48,7 @@
 ```mermaid
 graph TD
     subgraph Layer4 ["第4層: 外部検証シナリオ (scenario/)"]
-        DTS["config.dts"]
+        DTS["config.gtr / config.dts"]
         FW["main.c (UIO/MMIO FW)"]
         RUN["run.sh"]
     end
@@ -87,7 +87,7 @@ graph TD
 - **第1層: ハードウェア RTL 層 (`rtl/`)**: Verilog-2001 準拠の Z80 プロセッサコア。Verilator によるサイクル精度シミュレーションを前提に最適化。
 - **第2層: シミュレータ＆ハーネス層 (`src/`)**: 64KB RAM、Intel HEX パーサ、スナップショット履歴バッファ、UNIX ソケット / JSON-RPC 通信デーモン。
 - **第3層: DPPA 動的ペイン層 (`panes/`, `pane/`, `scripts/`)**: F-BB ダッシュボードの Dockview にホットマウントされる React ESM コンポーネント群（7 分割ペイン＋統合ペイン）および動的逆アセンブルスクリプト。
-- **第4層: 外部検証シナリオ層 (`scenario/`)**: F-BB の Device Tree (`config.dts`)、C-Shim、UIO ドライバと連携するエンドツーエンド検証環境。
+- **第4層: 外部検証シナリオ層 (`scenario/`)**: F-BB の GTR/DTS (`config.gtr` / `config.dts`)、C-Shim、UIO ドライバと連携するエンドツーエンド検証環境。
 
 ---
 
@@ -125,7 +125,8 @@ RetroCoreTracer-FBB/
 ├── scripts/                    # ユーティリティスクリプト
 │   └── hex_to_program.py       # Intel HEX 構造化逆アセンブラ & JSON 生成
 ├── scenario/                   # F-BB 外部検証テストシナリオ
-│   ├── config.dts              # Device Tree (Z80 UIO & UART 定義)
+│   ├── config.gtr              # GTR (Z80 UIO 仮想レジスタ定義)
+│   ├── config.dts              # Device Tree (Z80 UIO & UART 標準ノード定義)
 │   ├── main.c                  # シナリオ検証ファームウェア (MMIO)
 │   ├── CMakeLists.txt          # シナリオビルド設定
 │   ├── run.sh                  # シナリオ起動ランナースクリプト

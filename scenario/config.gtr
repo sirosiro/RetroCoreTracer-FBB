@@ -1,0 +1,11 @@
+/dts-v1/;
+/include/ "config.dts"
+
+&vfpga_z80 {
+    registers =
+        "CTRL   @ 0x00",
+        "STATUS @ 0x04",
+        "CMD    @ 0x08",
+        "CYCLES @ 0x0C";
+};
+

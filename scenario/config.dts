@@ -12,7 +12,7 @@
     };
 
     /* 標準 UART: CLI / テレメトリ通信用 */
-    vfpga_uart@40000000 {
+    vfpga_uart: vfpga_uart@40000000 {
         compatible = "xlnx,xps-uartlite-1.00.a";
         reg = <0x40000000 0x1000>;
         label = "/dev/ttyUL0";
@@ -20,14 +20,9 @@
     };
 
     /* Z80 Tracer Control Register (UIO) */
-    vfpga_z80@42000000 {
+    vfpga_z80: vfpga_z80@42000000 {
         compatible = "generic-uio";
         reg = <0x42000000 0x1000>;
         label = "/dev/uio0";
-        registers =
-            "CTRL   @ 0x00",
-            "STATUS @ 0x04",
-            "CMD    @ 0x08",
-            "CYCLES @ 0x0C";
     };
 };
