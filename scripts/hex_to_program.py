@@ -282,6 +282,92 @@ def disassemble_z80(mem, min_addr, max_addr):
             mnem = "POP"
             dest = rp
             comment = f"; Pop {rp} from stack"
+        elif op == 0x22:
+            lo = mem[pc]; pc += 1; bytes_list.append(f"{lo:02X}")
+            hi = mem[pc]; pc += 1; bytes_list.append(f"{hi:02X}")
+            val = (hi << 8) | lo
+            mnem = "LD"
+            dest = f"(${val:04X}),"
+            src = "HL"
+            comment = f"; Store HL to [0x{val:04X}]"
+        elif op == 0x2A:
+            lo = mem[pc]; pc += 1; bytes_list.append(f"{lo:02X}")
+            hi = mem[pc]; pc += 1; bytes_list.append(f"{hi:02X}")
+            val = (hi << 8) | lo
+            mnem = "LD"
+            dest = "HL,"
+            src = f"(${val:04X})"
+            comment = f"; Load HL from [0x{val:04X}]"
+        elif op == 0xF9:
+            mnem = "LD"
+            dest = "SP,"
+            src = "HL"
+            comment = "; Load SP from HL"
+        elif op == 0xE3:
+            mnem = "EX"
+            dest = "(SP),"
+            src = "HL"
+            comment = "; Exchange [SP] and HL"
+        elif op == 0xE9:
+            mnem = "JP"
+            dest = "(HL)"
+            comment = "; Jump to [HL]"
+        elif (op & 0xCF) == 0x09:
+            rp = r16[(op >> 4) & 0x03]
+            mnem = "ADD"
+            dest = "HL,"
+            src = rp
+            comment = f"; HL = HL + {rp}"
+        elif (op & 0xCF) == 0x03:
+            rp = r16[(op >> 4) & 0x03]
+            mnem = "INC"
+            dest = rp
+            comment = f"; Increment {rp}"
+        elif (op & 0xCF) == 0x0B:
+            rp = r16[(op >> 4) & 0x03]
+            mnem = "DEC"
+            dest = rp
+            comment = f"; Decrement {rp}"
+        elif op == 0x30 or op == 0x38:
+            cond = "NC," if op == 0x30 else "C,"
+            e = mem[pc]; pc += 1; bytes_list.append(f"{e:02X}")
+            offset = e - 256 if (e & 0x80) else e
+            target = (pc + offset) & 0xFFFF
+            mnem = "JR"
+            dest = cond
+            src = f"${target:04X}"
+            comment = f"; Jump if {cond[:-1]} to 0x{target:04X}"
+        elif (op & 0xC7) == 0xC7:
+            p = op & 0x38
+            mnem = "RST"
+            dest = f"${p:02X}"
+            comment = f"; Restart to 0x{p:04X}"
+        elif (op & 0xC7) == 0xC2:
+            cc_names = ["NZ", "Z", "NC", "C", "PO", "PE", "P", "M"]
+            cond = cc_names[(op >> 3) & 0x07]
+            lo = mem[pc]; pc += 1; bytes_list.append(f"{lo:02X}")
+            hi = mem[pc]; pc += 1; bytes_list.append(f"{hi:02X}")
+            target = (hi << 8) | lo
+            mnem = "JP"
+            dest = f"{cond},"
+            src = f"${target:04X}"
+            comment = f"; Jump if {cond} to 0x{target:04X}"
+        elif (op & 0xC7) == 0xC4:
+            cc_names = ["NZ", "Z", "NC", "C", "PO", "PE", "P", "M"]
+            cond = cc_names[(op >> 3) & 0x07]
+            lo = mem[pc]; pc += 1; bytes_list.append(f"{lo:02X}")
+            hi = mem[pc]; pc += 1; bytes_list.append(f"{hi:02X}")
+            target = (hi << 8) | lo
+            mnem = "CALL"
+            dest = f"{cond},"
+            src = f"${target:04X}"
+            comment = f"; Call subroutine if {cond} at 0x{target:04X}"
+        elif (op & 0xC7) == 0xC0:
+            cc_names = ["NZ", "Z", "NC", "C", "PO", "PE", "P", "M"]
+            cond = cc_names[(op >> 3) & 0x07]
+            mnem = "RET"
+            dest = cond
+            comment = f"; Return if {cond}"
         else:
             mnem = "DB"
             dest = f"${op:02X}"

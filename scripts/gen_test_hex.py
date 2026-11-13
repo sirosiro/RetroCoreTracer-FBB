@@ -56,9 +56,47 @@ def generate_phase2_hex(output_path: str):
     ])
     write_intel_hex(output_path, {0x0000: prog})
 
+def generate_phase3_hex(output_path: str):
+    # Phase 3: 16-bit LD, ADD HL, INC/DEC ss, PUSH/POP, CALL/RET, JR cc, RST, EX (SP), HL
+    addr_map = {
+        0x0000: bytearray([
+            0xC3, 0x40, 0x00  # 0000: JP $0040
+        ]),
+        0x0010: bytearray([
+            0xC9              # 0010: RET
+        ]),
+        0x0030: bytearray([
+            0xE3,             # 0030: EX (SP), HL
+            0xE3,             # 0031: EX (SP), HL
+            0xC9              # 0032: RET
+        ]),
+        0x0040: bytearray([
+            0x31, 0x00, 0x10, # 0040: LD SP, $1000
+            0x21, 0x34, 0x12, # 0043: LD HL, $1234
+            0x22, 0x80, 0x00, # 0046: LD ($0080), HL
+            0x21, 0x00, 0x00, # 0049: LD HL, $0000
+            0x2A, 0x80, 0x00, # 004C: LD HL, ($0080)
+            0x01, 0x11, 0x01, # 004F: LD BC, $0111
+            0x09,             # 0052: ADD HL, BC
+            0x03,             # 0053: INC BC
+            0x0B,             # 0054: DEC BC
+            0xE5,             # 0055: PUSH HL
+            0xD1,             # 0056: POP DE
+            0xCD, 0x30, 0x00, # 0057: CALL $0030
+            0x97,             # 005A: SUB A
+            0x28, 0x03,       # 005B: JR Z, +3 -> $0060
+            0x76, 0x76, 0x76, # 005D..005F: trap HALTs
+            0xD7,             # 0060: RST $10
+            0x76              # 0061: HALT
+        ])
+    }
+    write_intel_hex(output_path, addr_map)
+
 if __name__ == "__main__":
     out_dir = sys.argv[1] if len(sys.argv) > 1 else "examples"
     os.makedirs(out_dir, exist_ok=True)
     p2_file = os.path.join(out_dir, "z80_test_02_alu_flags_daa.hex")
     generate_phase2_hex(p2_file)
+    p3_file = os.path.join(out_dir, "z80_test_03_branch_call_rst.hex")
+    generate_phase3_hex(p3_file)
 

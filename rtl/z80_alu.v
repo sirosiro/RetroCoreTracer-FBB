@@ -2,13 +2,19 @@
 // @intent:cleanroom 完全な自作 Verilog 実装（Pure-Intent Mode）
 
 module z80_alu (
-    input  wire [4:0] alu_op,      // 0:ADD, 1:ADC, 2:SUB, 3:SBC, 4:AND, 5:XOR, 6:OR, 7:CP, 8:INC, 9:DEC
-                                   // 10:DAA, 11:CPL, 12:NEG, 13:CCF, 14:SCF, 15:RLCA, 16:RRCA, 17:RLA, 18:RRA
-    input  wire [7:0] in_a,        // オペランド A (通常 A レジスタまたは r)
-    input  wire [7:0] in_b,        // オペランド B
-    input  wire [7:0] in_f,        // 直前のフラグレジスタ (キャリー入力用)
-    output reg  [7:0] out_res,     // 演算結果
-    output reg  [7:0] out_f        // 演算後のフラグレジスタ (S, Z, Y, H, X, PV, N, C)
+    input  wire [4:0]  alu_op,      // 0:ADD, 1:ADC, 2:SUB, 3:SBC, 4:AND, 5:XOR, 6:OR, 7:CP, 8:INC, 9:DEC
+                                    // 10:DAA, 11:CPL, 12:NEG, 13:CCF, 14:SCF, 15:RLCA, 16:RRCA, 17:RLA, 18:RRA
+                                    // 19:ADD16 (ADD HL, ss)
+    input  wire [7:0]  in_a,        // オペランド A (通常 A レジスタまたは r)
+    input  wire [7:0]  in_b,        // オペランド B
+    input  wire [7:0]  in_f,        // 直前のフラグレジスタ (キャリー入力用)
+    output reg  [7:0]  out_res,     // 8-bit 演算結果
+    output reg  [7:0]  out_f,       // 演算後のフラグレジスタ (S, Z, Y, H, X, PV, N, C)
+
+    // 16-bit 演算ポート
+    input  wire [15:0] in_a16,
+    input  wire [15:0] in_b16,
+    output reg  [15:0] out_res16
 );
 
     wire carry_in = in_f[0]; // C flag
@@ -36,6 +42,10 @@ module z80_alu (
     reg daa_h;
     reg [7:0] daa_corr;
 
+    // 16-bit 演算用
+    reg [16:0] sum17;
+    reg half_carry16;
+
     always @(*) begin
         sum9 = 9'h000;
         half_carry = 1'b0;
@@ -46,6 +56,10 @@ module z80_alu (
         daa_c = 1'b0;
         daa_h = 1'b0;
         daa_corr = 8'h00;
+
+        sum17 = 17'd0;
+        half_carry16 = 1'b0;
+        out_res16 = 16'h0000;
 
         case (alu_op)
             5'd0: begin // ADD A, s
@@ -150,7 +164,6 @@ module z80_alu (
 
             5'd11: begin // CPL (Complement A)
                 res = ~in_a;
-                // S, Z, PV, C unchanged, H=1, N=1
                 out_f = {in_f[7], in_f[6], res[5], 1'b1, res[3], in_f[2], 1'b1, in_f[0]};
             end
 
@@ -164,13 +177,11 @@ module z80_alu (
 
             5'd13: begin // CCF (Complement Carry Flag)
                 res = in_a;
-                // H <= previous C, N <= 0, C <= ~C
                 out_f = {in_f[7], in_f[6], res[5], in_f[0], res[3], in_f[2], 1'b0, ~in_f[0]};
             end
 
             5'd14: begin // SCF (Set Carry Flag)
                 res = in_a;
-                // H <= 0, N <= 0, C <= 1
                 out_f = {in_f[7], in_f[6], res[5], 1'b0, res[3], in_f[2], 1'b0, 1'b1};
             end
 
@@ -192,6 +203,14 @@ module z80_alu (
             5'd18: begin // RRA (Rotate Right through Carry Accumulator)
                 res = {in_f[0], in_a[7:1]};
                 out_f = {in_f[7], in_f[6], res[5], 1'b0, res[3], in_f[2], 1'b0, in_a[0]};
+            end
+
+            5'd19: begin // ADD16 (ADD HL, ss)
+                sum17 = {1'b0, in_a16} + {1'b0, in_b16};
+                out_res16 = sum17[15:0];
+                half_carry16 = ({1'b0, in_a16[11:0]} + {1'b0, in_b16[11:0]}) >= 13'h1000;
+                // S, Z, PV 不変、N=0、H=bit11キャリー、C=bit15キャリー
+                out_f = {in_f[7:5], half_carry16, in_f[3:2], 1'b0, sum17[16]};
             end
 
             default: begin

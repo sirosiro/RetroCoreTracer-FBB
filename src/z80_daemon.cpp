@@ -117,6 +117,9 @@ CpuSnapshot Z80Daemon::capture_snapshot() {
 
     // ニーモニック逆アセンブルの簡易解決
     const char* r_names[] = {"B", "C", "D", "E", "H", "L", "(HL)", "A"};
+    const char* r16_names[] = {"BC", "DE", "HL", "SP"};
+    const char* qq_names[] = {"BC", "DE", "HL", "AF"};
+    const char* cc_names[] = {"NZ", "Z", "NC", "C", "PO", "PE", "P", "M"};
     const char* alu_names[] = {"ADD A,", "ADC A,", "SUB", "SBC A,", "AND", "XOR", "OR", "CP"};
 
     uint8_t op = s.opcode;
@@ -125,6 +128,9 @@ CpuSnapshot Z80Daemon::capture_snapshot() {
     else if (op == 0xEB) s.executed_mnemonic = "EX DE, HL";
     else if (op == 0x08) s.executed_mnemonic = "EX AF, AF'";
     else if (op == 0xD9) s.executed_mnemonic = "EXX";
+    else if (op == 0xE3) s.executed_mnemonic = "EX (SP), HL";
+    else if (op == 0xE9) s.executed_mnemonic = "JP (HL)";
+    else if (op == 0xF9) s.executed_mnemonic = "LD SP, HL";
     else if (op == 0x27) s.executed_mnemonic = "DAA";
     else if (op == 0x2F) s.executed_mnemonic = "CPL";
     else if (op == 0x37) s.executed_mnemonic = "SCF";
@@ -139,12 +145,43 @@ CpuSnapshot Z80Daemon::capture_snapshot() {
     else if (op == 0x12) s.executed_mnemonic = "LD (DE), A";
     else if (op == 0x32) s.executed_mnemonic = "LD (nn), A";
     else if (op == 0x3A) s.executed_mnemonic = "LD A, (nn)";
+    else if (op == 0x22) s.executed_mnemonic = "LD (nn), HL";
+    else if (op == 0x2A) s.executed_mnemonic = "LD HL, (nn)";
     else if (op == 0x34) s.executed_mnemonic = "INC (HL)";
     else if (op == 0x35) s.executed_mnemonic = "DEC (HL)";
     else if (op == 0x36) s.executed_mnemonic = "LD (HL), n";
-    else if (op == 0xC3) s.executed_mnemonic = "JP nn";
+    else if (op == 0x10) s.executed_mnemonic = "DJNZ e";
     else if (op == 0x18) s.executed_mnemonic = "JR e";
-    else if ((op & 0xC0) == 0x40) {
+    else if (op == 0xC3) s.executed_mnemonic = "JP nn";
+    else if (op == 0xCD) s.executed_mnemonic = "CALL nn";
+    else if (op == 0xC9) s.executed_mnemonic = "RET";
+    else if ((op & 0xCF) == 0xC5) {
+        s.executed_mnemonic = std::string("PUSH ") + qq_names[(op >> 4) & 3];
+    } else if ((op & 0xCF) == 0xC1) {
+        s.executed_mnemonic = std::string("POP ") + qq_names[(op >> 4) & 3];
+    } else if ((op & 0xCF) == 0x01) {
+        s.executed_mnemonic = std::string("LD ") + r16_names[(op >> 4) & 3] + ", nn";
+    } else if ((op & 0xCF) == 0x09) {
+        s.executed_mnemonic = std::string("ADD HL, ") + r16_names[(op >> 4) & 3];
+    } else if ((op & 0xCF) == 0x03) {
+        s.executed_mnemonic = std::string("INC ") + r16_names[(op >> 4) & 3];
+    } else if ((op & 0xCF) == 0x0B) {
+        s.executed_mnemonic = std::string("DEC ") + r16_names[(op >> 4) & 3];
+    } else if ((op & 0xC7) == 0xC7) {
+        s.executed_mnemonic = "RST 0x" + ([op]() {
+            std::ostringstream ss;
+            ss << std::hex << std::uppercase << std::setw(2) << std::setfill('0') << (int)(op & 0x38);
+            return ss.str();
+        })();
+    } else if ((op & 0xC7) == 0xC4) {
+        s.executed_mnemonic = std::string("CALL ") + cc_names[(op >> 3) & 7] + ", nn";
+    } else if ((op & 0xC7) == 0xC2) {
+        s.executed_mnemonic = std::string("JP ") + cc_names[(op >> 3) & 7] + ", nn";
+    } else if ((op & 0xC7) == 0xC0) {
+        s.executed_mnemonic = std::string("RET ") + cc_names[(op >> 3) & 7];
+    } else if ((op & 0xE7) == 0x20) {
+        s.executed_mnemonic = std::string("JR ") + cc_names[(op >> 3) & 3] + ", e";
+    } else if ((op & 0xC0) == 0x40) {
         s.executed_mnemonic = std::string("LD ") + r_names[(op >> 3) & 7] + ", " + r_names[op & 7];
     } else if ((op & 0xC7) == 0x06) {
         s.executed_mnemonic = std::string("LD ") + r_names[(op >> 3) & 7] + ", n";

@@ -48,6 +48,7 @@ module z80_top (
     output wire [7:0]  probe_flags,
     output wire        probe_bus_active,
     output wire        probe_instr_boundary,
+    output wire [5:0]  probe_state,
     output wire        halted
 );
 
@@ -68,6 +69,9 @@ module z80_top (
     wire [15:0] pair_wr_data;
     wire        pair_is_af;
 
+    wire        sp_wr_en;
+    wire [15:0] sp_new;
+
     wire        ex_de_hl;
     wire        ex_af_af_alt;
     wire        exx;
@@ -79,6 +83,10 @@ module z80_top (
     wire [7:0]  alu_out_f;
     wire        flags_wr_en;
     wire [7:0]  flags_wire;
+
+    wire [15:0] alu_in_a16;
+    wire [15:0] alu_in_b16;
+    wire [15:0] alu_out_res16;
 
     wire [7:0]  acc_wire;
     wire [15:0] hl_wire;
@@ -102,6 +110,8 @@ module z80_top (
         .pair_sel(pair_sel),
         .pair_wr_data(pair_wr_data),
         .pair_is_af(pair_is_af),
+        .sp_wr_en(sp_wr_en),
+        .sp_new(sp_new),
         .pc_inc(pc_inc),
         .pc_load(pc_load),
         .pc_new(pc_new),
@@ -150,7 +160,10 @@ module z80_top (
         .in_b(alu_in_b),
         .in_f(flags_wire),
         .out_res(alu_out_res),
-        .out_f(alu_out_f)
+        .out_f(alu_out_f),
+        .in_a16(alu_in_a16),
+        .in_b16(alu_in_b16),
+        .out_res16(alu_out_res16)
     );
 
     // 3. 命令制御 & バスステートマシン
@@ -178,11 +191,14 @@ module z80_top (
         .pair_sel(pair_sel),
         .pair_wr_data(pair_wr_data),
         .pair_is_af(pair_is_af),
+        .sp_wr_en(sp_wr_en),
+        .sp_new(sp_new),
         .acc_out(acc_wire),
         .hl_out(hl_wire),
         .bc_out(bc_wire),
         .de_out(de_wire),
         .sp_out(sp_wire),
+        .flags_in_wire(flags_wire),
         .ex_de_hl(ex_de_hl),
         .ex_af_af_alt(ex_af_af_alt),
         .exx(exx),
@@ -190,12 +206,16 @@ module z80_top (
         .alu_in_a(alu_in_a),
         .alu_in_b(alu_in_b),
         .alu_out_res(alu_out_res),
+        .alu_in_a16(alu_in_a16),
+        .alu_in_b16(alu_in_b16),
+        .alu_out_res16(alu_out_res16),
         .flags_wr_en(flags_wr_en),
         .restore_en(restore_en),
         .restore_halted(restore_halted),
         .probe_opcode(probe_opcode),
         .probe_bus_active(probe_bus_active),
         .probe_instr_boundary(probe_instr_boundary),
+        .probe_state(probe_state),
         .halted(halted)
     );
 

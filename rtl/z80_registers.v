@@ -21,6 +21,10 @@ module z80_registers (
     input  wire [15:0] pair_wr_data,
     input  wire        pair_is_af,  // 1: AFペアへの書込
 
+    // SP 直接書込ポート (スタック PUSH/POP/CALL/RET 独立制御用)
+    input  wire        sp_wr_en,
+    input  wire [15:0] sp_new,
+
     // PC 制御
     input  wire        pc_inc,
     input  wire        pc_load,
@@ -187,7 +191,12 @@ module z80_registers (
                 r_h_alt <= r_h; r_l_alt <= r_l;
             end
 
-            // 4. 8-bit 書込
+            // 4. SP 更新 (直接ポート優先)
+            if (sp_wr_en) begin
+                r_sp <= sp_new;
+            end
+
+            // 5. 8-bit 書込
             if (reg_wr_en) begin
                 case (reg_dst_sel)
                     3'd0: r_b <= reg_wr_data;
@@ -201,7 +210,7 @@ module z80_registers (
                 endcase
             end
 
-            // 5. 16-bit 書込
+            // 6. 16-bit 書込
             if (pair_wr_en) begin
                 if (pair_is_af) begin
                     r_a <= pair_wr_data[15:8];
@@ -211,7 +220,7 @@ module z80_registers (
                         2'd0: begin r_b <= pair_wr_data[15:8]; r_c <= pair_wr_data[7:0]; end
                         2'd1: begin r_d <= pair_wr_data[15:8]; r_e <= pair_wr_data[7:0]; end
                         2'd2: begin r_h <= pair_wr_data[15:8]; r_l <= pair_wr_data[7:0]; end
-                        2'd3: begin r_sp <= pair_wr_data; end
+                        2'd3: begin if (!sp_wr_en) r_sp <= pair_wr_data; end
                     endcase
                 end
             end
