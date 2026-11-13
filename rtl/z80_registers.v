@@ -1,5 +1,6 @@
 // @intent:responsibility Z80 レジスタファイル（メイン、裏レジスタ、IX, IY, SP, PC）の保持
 // @intent:undo-snapshot 外部からの直接状態復元（restore_en）および常時プローブ公開
+// @intent:direct-wires デコード・ALU パイプライン直結ワイヤ（acc_out, hl_out, bc_out, de_out, sp_out）
 
 module z80_registers (
     input  wire        clk,
@@ -36,6 +37,13 @@ module z80_registers (
     input  wire [7:0]  flags_in,
     output wire [7:0]  flags_out,
 
+    // 直結参照ワイヤ（パイプライン競合解消用）
+    output wire [7:0]  acc_out,
+    output wire [15:0] hl_out,
+    output wire [15:0] bc_out,
+    output wire [15:0] de_out,
+    output wire [15:0] sp_out,
+
     // タイムトラベル（Undo 復元用）ポート
     input  wire        restore_en,
     input  wire [15:0] restore_pc,
@@ -46,6 +54,10 @@ module z80_registers (
     input  wire [15:0] restore_sp,
     input  wire [15:0] restore_ix,
     input  wire [15:0] restore_iy,
+    input  wire [15:0] restore_af_alt,
+    input  wire [15:0] restore_bc_alt,
+    input  wire [15:0] restore_de_alt,
+    input  wire [15:0] restore_hl_alt,
 
     // UI プローブ出力 (全レジスタ常時可視化)
     output wire [15:0] probe_af,
@@ -80,6 +92,13 @@ module z80_registers (
 
     assign pc_out    = r_pc;
     assign flags_out = r_f;
+
+    // 直結参照ワイヤ
+    assign acc_out = r_a;
+    assign hl_out  = {r_h, r_l};
+    assign bc_out  = {r_b, r_c};
+    assign de_out  = {r_d, r_e};
+    assign sp_out  = r_sp;
 
     // プローブ出力バインド
     assign probe_af     = {r_a, r_f};
@@ -130,6 +149,10 @@ module z80_registers (
             r_b  <= restore_bc[15:8]; r_c  <= restore_bc[7:0];
             r_d  <= restore_de[15:8]; r_e  <= restore_de[7:0];
             r_h  <= restore_hl[15:8]; r_l  <= restore_hl[7:0];
+            r_a_alt <= restore_af_alt[15:8]; r_f_alt <= restore_af_alt[7:0];
+            r_b_alt <= restore_bc_alt[15:8]; r_c_alt <= restore_bc_alt[7:0];
+            r_d_alt <= restore_de_alt[15:8]; r_e_alt <= restore_de_alt[7:0];
+            r_h_alt <= restore_hl_alt[15:8]; r_l_alt <= restore_hl_alt[7:0];
             r_sp <= restore_sp;
             r_ix <= restore_ix;
             r_iy <= restore_iy;

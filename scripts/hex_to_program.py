@@ -58,6 +58,93 @@ def disassemble_z80(mem, min_addr, max_addr):
         elif op == 0x76:
             mnem = "HALT"
             comment = "; Halt CPU"
+        elif op == 0x27:
+            mnem = "DAA"
+            comment = "; Decimal adjust accumulator"
+        elif op == 0x2F:
+            mnem = "CPL"
+            comment = "; Invert accumulator (ones complement)"
+        elif op == 0x37:
+            mnem = "SCF"
+            comment = "; Set carry flag (C = 1)"
+        elif op == 0x3F:
+            mnem = "CCF"
+            comment = "; Complement carry flag"
+        elif op == 0x07:
+            mnem = "RLCA"
+            comment = "; Rotate left circular accumulator"
+        elif op == 0x0F:
+            mnem = "RRCA"
+            comment = "; Rotate right circular accumulator"
+        elif op == 0x17:
+            mnem = "RLA"
+            comment = "; Rotate left accumulator through carry"
+        elif op == 0x1F:
+            mnem = "RRA"
+            comment = "; Rotate right accumulator through carry"
+        elif op == 0xEB:
+            mnem = "EX"
+            dest = "DE,"
+            src = "HL"
+            comment = "; Exchange DE and HL"
+        elif op == 0x08:
+            mnem = "EX"
+            dest = "AF,"
+            src = "AF'"
+            comment = "; Exchange AF and AF'"
+        elif op == 0xD9:
+            mnem = "EXX"
+            comment = "; Exchange BC, DE, HL with shadow registers"
+        elif op == 0x0A:
+            mnem = "LD"
+            dest = "A,"
+            src = "(BC)"
+            comment = "; Load A from [BC]"
+        elif op == 0x1A:
+            mnem = "LD"
+            dest = "A,"
+            src = "(DE)"
+            comment = "; Load A from [DE]"
+        elif op == 0x02:
+            mnem = "LD"
+            dest = "(BC),"
+            src = "A"
+            comment = "; Store A to [BC]"
+        elif op == 0x12:
+            mnem = "LD"
+            dest = "(DE),"
+            src = "A"
+            comment = "; Store A to [DE]"
+        elif op == 0x36:
+            n = mem[pc]; pc += 1; bytes_list.append(f"{n:02X}")
+            mnem = "LD"
+            dest = "(HL),"
+            src = f"${n:02X}"
+            comment = f"; Store 0x{n:02X} to [HL]"
+        elif op == 0x32:
+            lo = mem[pc]; pc += 1; bytes_list.append(f"{lo:02X}")
+            hi = mem[pc]; pc += 1; bytes_list.append(f"{hi:02X}")
+            val = (hi << 8) | lo
+            mnem = "LD"
+            dest = f"(${val:04X}),"
+            src = "A"
+            comment = f"; Store A to [0x{val:04X}]"
+        elif op == 0x3A:
+            lo = mem[pc]; pc += 1; bytes_list.append(f"{lo:02X}")
+            hi = mem[pc]; pc += 1; bytes_list.append(f"{hi:02X}")
+            val = (hi << 8) | lo
+            mnem = "LD"
+            dest = "A,"
+            src = f"(${val:04X})"
+            comment = f"; Load A from [0x{val:04X}]"
+        elif op == 0x34:
+            mnem = "INC"
+            dest = "(HL)"
+            comment = "; Increment byte at [HL]"
+        elif op == 0x35:
+            mnem = "DEC"
+            dest = "(HL)"
+            comment = "; Decrement byte at [HL]"
         elif op == 0xC9:
             mnem = "RET"
             comment = "; Return from subroutine"
@@ -90,11 +177,52 @@ def disassemble_z80(mem, min_addr, max_addr):
             dest = "A,"
             src = src_r
             comment = f"; A = A + {src_r}"
+        elif (op & 0xF8) == 0x88:
+            src_r = r8[op & 0x07]
+            mnem = "ADC"
+            dest = "A,"
+            src = src_r
+            comment = f"; A = A + {src_r} + C"
         elif (op & 0xF8) == 0x90:
             src_r = r8[op & 0x07]
             mnem = "SUB"
             dest = src_r
             comment = f"; A = A - {src_r}"
+        elif (op & 0xF8) == 0x98:
+            src_r = r8[op & 0x07]
+            mnem = "SBC"
+            dest = "A,"
+            src = src_r
+            comment = f"; A = A - {src_r} - C"
+        elif (op & 0xF8) == 0xA0:
+            src_r = r8[op & 0x07]
+            mnem = "AND"
+            dest = src_r
+            comment = f"; A = A & {src_r}"
+        elif (op & 0xF8) == 0xA8:
+            src_r = r8[op & 0x07]
+            mnem = "XOR"
+            dest = src_r
+            comment = f"; A = A ^ {src_r}"
+        elif (op & 0xF8) == 0xB0:
+            src_r = r8[op & 0x07]
+            mnem = "OR"
+            dest = src_r
+            comment = f"; A = A | {src_r}"
+        elif (op & 0xF8) == 0xB8:
+            src_r = r8[op & 0x07]
+            mnem = "CP"
+            dest = src_r
+            comment = f"; Compare A with {src_r}"
+        elif (op & 0xC7) == 0xC6:
+            alu_ops = ["ADD A,", "ADC A,", "SUB", "SBC A,", "AND", "XOR", "OR", "CP"]
+            alu_name = alu_ops[(op >> 3) & 0x07]
+            n = mem[pc]; pc += 1; bytes_list.append(f"{n:02X}")
+            parts = alu_name.split(' ')
+            mnem = parts[0]
+            dest = parts[1] if len(parts) > 1 else ""
+            src = f"${n:02X}"
+            comment = f"; {alu_name} 0x{n:02X}"
         elif (op & 0xC7) == 0x04:
             r = r8[(op >> 3) & 0x07]
             mnem = "INC"

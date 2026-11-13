@@ -25,6 +25,11 @@ module z80_top (
     input  wire [15:0] restore_sp,
     input  wire [15:0] restore_ix,
     input  wire [15:0] restore_iy,
+    input  wire [15:0] restore_af_alt,
+    input  wire [15:0] restore_bc_alt,
+    input  wire [15:0] restore_de_alt,
+    input  wire [15:0] restore_hl_alt,
+    input  wire        restore_halted,
 
     // UI 観測用プローブ端子 (Bus Glow & Inspector)
     output wire [15:0] probe_pc,
@@ -42,6 +47,7 @@ module z80_top (
     output wire [15:0] probe_sp,
     output wire [7:0]  probe_flags,
     output wire        probe_bus_active,
+    output wire        probe_instr_boundary,
     output wire        halted
 );
 
@@ -66,13 +72,19 @@ module z80_top (
     wire        ex_af_af_alt;
     wire        exx;
 
-    wire [3:0]  alu_op;
+    wire [4:0]  alu_op;
     wire [7:0]  alu_in_a;
     wire [7:0]  alu_in_b;
     wire [7:0]  alu_out_res;
     wire [7:0]  alu_out_f;
     wire        flags_wr_en;
     wire [7:0]  flags_wire;
+
+    wire [7:0]  acc_wire;
+    wire [15:0] hl_wire;
+    wire [15:0] bc_wire;
+    wire [15:0] de_wire;
+    wire [15:0] sp_wire;
 
     assign probe_pc    = pc_wire;
     assign probe_flags = flags_wire;
@@ -100,6 +112,11 @@ module z80_top (
         .flags_wr_en(flags_wr_en),
         .flags_in(alu_out_f),
         .flags_out(flags_wire),
+        .acc_out(acc_wire),
+        .hl_out(hl_wire),
+        .bc_out(bc_wire),
+        .de_out(de_wire),
+        .sp_out(sp_wire),
         .restore_en(restore_en),
         .restore_pc(restore_pc),
         .restore_af(restore_af),
@@ -109,6 +126,10 @@ module z80_top (
         .restore_sp(restore_sp),
         .restore_ix(restore_ix),
         .restore_iy(restore_iy),
+        .restore_af_alt(restore_af_alt),
+        .restore_bc_alt(restore_bc_alt),
+        .restore_de_alt(restore_de_alt),
+        .restore_hl_alt(restore_hl_alt),
         .probe_af(probe_af),
         .probe_bc(probe_bc),
         .probe_de(probe_de),
@@ -157,6 +178,11 @@ module z80_top (
         .pair_sel(pair_sel),
         .pair_wr_data(pair_wr_data),
         .pair_is_af(pair_is_af),
+        .acc_out(acc_wire),
+        .hl_out(hl_wire),
+        .bc_out(bc_wire),
+        .de_out(de_wire),
+        .sp_out(sp_wire),
         .ex_de_hl(ex_de_hl),
         .ex_af_af_alt(ex_af_af_alt),
         .exx(exx),
@@ -165,8 +191,11 @@ module z80_top (
         .alu_in_b(alu_in_b),
         .alu_out_res(alu_out_res),
         .flags_wr_en(flags_wr_en),
+        .restore_en(restore_en),
+        .restore_halted(restore_halted),
         .probe_opcode(probe_opcode),
         .probe_bus_active(probe_bus_active),
+        .probe_instr_boundary(probe_instr_boundary),
         .halted(halted)
     );
 

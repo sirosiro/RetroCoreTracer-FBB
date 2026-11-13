@@ -1,4 +1,4 @@
-// @intent:responsibility Z80Daemon 実装
+// @intent:responsibility Z80Daemon 実装 (Phase 2: 完全 Undo メモリトラッキング & 組合せ ALU サイクル実行)
 #include "z80_daemon.hpp"
 #include <iostream>
 #include <iomanip>
@@ -40,6 +40,8 @@ void Z80Daemon::clock_tick() {
             top_->din = memory_.read(addr);
             top_->eval();
         } else if (top_->wr_n == 0) {
+            // メモリ書換 Undo ログの記録
+            pending_mem_undo_.emplace_back(addr, memory_.read(addr));
             memory_.write(addr, top_->dout);
         }
     }
@@ -61,6 +63,11 @@ void Z80Daemon::reset() {
     top_->rst_n = 0;
     top_->clk = 0;
     top_->restore_en = 0;
+    top_->restore_af_alt = 0;
+    top_->restore_bc_alt = 0;
+    top_->restore_de_alt = 0;
+    top_->restore_hl_alt = 0;
+    top_->restore_halted = 0;
     top_->eval();
 
     clock_tick();
@@ -71,6 +78,7 @@ void Z80Daemon::reset() {
 
     step_count_ = 0;
     cycle_count_ = 0;
+    pending_mem_undo_.clear();
     history_.clear();
 
     auto init_snap = capture_snapshot();
@@ -108,21 +116,52 @@ CpuSnapshot Z80Daemon::capture_snapshot() {
     s.halted = (top_->halted != 0);
 
     // ニーモニック逆アセンブルの簡易解決
-    switch (s.opcode) {
-        case 0x00: s.executed_mnemonic = "NOP"; break;
-        case 0x76: s.executed_mnemonic = "HALT"; break;
-        case 0x3E: s.executed_mnemonic = "LD A, n"; break;
-        case 0x06: s.executed_mnemonic = "LD B, n"; break;
-        case 0x0E: s.executed_mnemonic = "LD C, n"; break;
-        case 0x80: s.executed_mnemonic = "ADD A, B"; break;
-        case 0x48: s.executed_mnemonic = "LD C, B"; break;
-        case 0x47: s.executed_mnemonic = "LD B, A"; break;
-        case 0xEB: s.executed_mnemonic = "EX DE, HL"; break;
-        case 0x08: s.executed_mnemonic = "EX AF, AF'"; break;
-        case 0xD9: s.executed_mnemonic = "EXX"; break;
-        case 0xC3: s.executed_mnemonic = "JP nn"; break;
-        case 0x18: s.executed_mnemonic = "JR e"; break;
-        default: s.executed_mnemonic = "OP " + std::to_string(s.opcode); break;
+    const char* r_names[] = {"B", "C", "D", "E", "H", "L", "(HL)", "A"};
+    const char* alu_names[] = {"ADD A,", "ADC A,", "SUB", "SBC A,", "AND", "XOR", "OR", "CP"};
+
+    uint8_t op = s.opcode;
+    if (op == 0x00) s.executed_mnemonic = "NOP";
+    else if (op == 0x76) s.executed_mnemonic = "HALT";
+    else if (op == 0xEB) s.executed_mnemonic = "EX DE, HL";
+    else if (op == 0x08) s.executed_mnemonic = "EX AF, AF'";
+    else if (op == 0xD9) s.executed_mnemonic = "EXX";
+    else if (op == 0x27) s.executed_mnemonic = "DAA";
+    else if (op == 0x2F) s.executed_mnemonic = "CPL";
+    else if (op == 0x37) s.executed_mnemonic = "SCF";
+    else if (op == 0x3F) s.executed_mnemonic = "CCF";
+    else if (op == 0x07) s.executed_mnemonic = "RLCA";
+    else if (op == 0x0F) s.executed_mnemonic = "RRCA";
+    else if (op == 0x17) s.executed_mnemonic = "RLA";
+    else if (op == 0x1F) s.executed_mnemonic = "RRA";
+    else if (op == 0x0A) s.executed_mnemonic = "LD A, (BC)";
+    else if (op == 0x1A) s.executed_mnemonic = "LD A, (DE)";
+    else if (op == 0x02) s.executed_mnemonic = "LD (BC), A";
+    else if (op == 0x12) s.executed_mnemonic = "LD (DE), A";
+    else if (op == 0x32) s.executed_mnemonic = "LD (nn), A";
+    else if (op == 0x3A) s.executed_mnemonic = "LD A, (nn)";
+    else if (op == 0x34) s.executed_mnemonic = "INC (HL)";
+    else if (op == 0x35) s.executed_mnemonic = "DEC (HL)";
+    else if (op == 0x36) s.executed_mnemonic = "LD (HL), n";
+    else if (op == 0xC3) s.executed_mnemonic = "JP nn";
+    else if (op == 0x18) s.executed_mnemonic = "JR e";
+    else if ((op & 0xC0) == 0x40) {
+        s.executed_mnemonic = std::string("LD ") + r_names[(op >> 3) & 7] + ", " + r_names[op & 7];
+    } else if ((op & 0xC7) == 0x06) {
+        s.executed_mnemonic = std::string("LD ") + r_names[(op >> 3) & 7] + ", n";
+    } else if ((op & 0xC7) == 0x04) {
+        s.executed_mnemonic = std::string("INC ") + r_names[(op >> 3) & 7];
+    } else if ((op & 0xC7) == 0x05) {
+        s.executed_mnemonic = std::string("DEC ") + r_names[(op >> 3) & 7];
+    } else if ((op & 0xC0) == 0x80) {
+        s.executed_mnemonic = std::string(alu_names[(op >> 3) & 7]) + " " + r_names[op & 7];
+    } else if ((op & 0xC7) == 0xC6) {
+        s.executed_mnemonic = std::string(alu_names[(op >> 3) & 7]) + " n";
+    } else {
+        s.executed_mnemonic = "OP 0x" + ([op]() {
+            std::ostringstream ss;
+            ss << std::hex << std::uppercase << std::setw(2) << std::setfill('0') << (int)op;
+            return ss.str();
+        })();
     }
     return s;
 }
@@ -132,14 +171,17 @@ CpuSnapshot Z80Daemon::step() {
         return history_.current();
     }
 
-    // 次の M1 (命令フェッチ開始) までクロックを進める
+    pending_mem_undo_.clear();
+
+    // 次の命令境界までクロックを進める
     clock_tick();
-    while (top_->m1_n != 0 && !top_->halted) {
+    while (top_->probe_instr_boundary == 0 && !top_->halted) {
         clock_tick();
     }
 
     step_count_++;
     auto snap = capture_snapshot();
+    snap.memory_undo = std::move(pending_mem_undo_);
     history_.push(snap);
     return snap;
 }
@@ -147,6 +189,12 @@ CpuSnapshot Z80Daemon::step() {
 CpuSnapshot Z80Daemon::backstep() {
     if (!history_.can_undo()) {
         return history_.current();
+    }
+
+    // 現在のスナップショットで書き換えられたメモリを逆順に復元
+    const auto& curr = history_.current();
+    for (auto it = curr.memory_undo.rbegin(); it != curr.memory_undo.rend(); ++it) {
+        memory_.write(it->first, it->second);
     }
 
     auto prev = history_.undo();
@@ -161,6 +209,11 @@ CpuSnapshot Z80Daemon::backstep() {
     top_->restore_sp = prev.sp;
     top_->restore_ix = prev.ix;
     top_->restore_iy = prev.iy;
+    top_->restore_af_alt = prev.af_alt;
+    top_->restore_bc_alt = prev.bc_alt;
+    top_->restore_de_alt = prev.de_alt;
+    top_->restore_hl_alt = prev.hl_alt;
+    top_->restore_halted = prev.halted;
 
     top_->clk = 1; top_->eval();
     top_->clk = 0; top_->eval();
@@ -193,6 +246,8 @@ void Z80Daemon::run_standalone_test(size_t max_steps) {
                   << " | A: 0x" << std::setw(2) << (s.af >> 8)
                   << " | B: 0x" << std::setw(2) << (s.bc >> 8)
                   << " | C: 0x" << std::setw(2) << (s.bc & 0xFF)
+                  << " | HL: 0x" << std::setw(4) << s.hl
+                  << " | Flags: 0x" << std::setw(2) << (int)s.flags
                   << " | Cycles: " << std::dec << s.cycle_count
                   << std::endl;
         if (s.halted) {
