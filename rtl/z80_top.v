@@ -48,6 +48,7 @@ module z80_top (
     output wire [7:0]  probe_flags,
     output wire        probe_bus_active,
     output wire        probe_instr_boundary,
+    output wire [2:0]  probe_prefix,
     output wire [5:0]  probe_state,
     output wire        halted
 );
@@ -76,7 +77,7 @@ module z80_top (
     wire        ex_af_af_alt;
     wire        exx;
 
-    wire [4:0]  alu_op;
+    wire [5:0]  alu_op;
     wire [7:0]  alu_in_a;
     wire [7:0]  alu_in_b;
     wire [7:0]  alu_out_res;
@@ -215,6 +216,7 @@ module z80_top (
         .probe_opcode(probe_opcode),
         .probe_bus_active(probe_bus_active),
         .probe_instr_boundary(probe_instr_boundary),
+        .probe_prefix(probe_prefix),
         .probe_state(probe_state),
         .halted(halted)
     );

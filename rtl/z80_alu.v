@@ -2,9 +2,11 @@
 // @intent:cleanroom 完全な自作 Verilog 実装（Pure-Intent Mode）
 
 module z80_alu (
-    input  wire [4:0]  alu_op,      // 0:ADD, 1:ADC, 2:SUB, 3:SBC, 4:AND, 5:XOR, 6:OR, 7:CP, 8:INC, 9:DEC
+    input  wire [5:0]  alu_op,      // 0:ADD, 1:ADC, 2:SUB, 3:SBC, 4:AND, 5:XOR, 6:OR, 7:CP, 8:INC, 9:DEC
                                     // 10:DAA, 11:CPL, 12:NEG, 13:CCF, 14:SCF, 15:RLCA, 16:RRCA, 17:RLA, 18:RRA
                                     // 19:ADD16 (ADD HL, ss)
+                                    // 20:RLC, 21:RRC, 22:RL, 23:RR, 24:SLA, 25:SRA, 26:SLL, 27:SRL
+                                    // 28:BIT, 29:RES, 30:SET
     input  wire [7:0]  in_a,        // オペランド A (通常 A レジスタまたは r)
     input  wire [7:0]  in_b,        // オペランド B
     input  wire [7:0]  in_f,        // 直前のフラグレジスタ (キャリー入力用)
@@ -62,7 +64,7 @@ module z80_alu (
         out_res16 = 16'h0000;
 
         case (alu_op)
-            5'd0: begin // ADD A, s
+            6'd0: begin // ADD A, s
                 sum9 = {1'b0, in_a} + {1'b0, in_b};
                 res  = sum9[7:0];
                 half_carry = half_carry_add;
@@ -70,7 +72,7 @@ module z80_alu (
                 out_f = {res[7], (res == 8'h00), res[5], half_carry, res[3], overflow, 1'b0, sum9[8]};
             end
 
-            5'd1: begin // ADC A, s
+            6'd1: begin // ADC A, s
                 sum9 = {1'b0, in_a} + {1'b0, in_b} + {8'h00, carry_in};
                 res  = sum9[7:0];
                 half_carry = half_carry_adc;
@@ -78,7 +80,7 @@ module z80_alu (
                 out_f = {res[7], (res == 8'h00), res[5], half_carry, res[3], overflow, 1'b0, sum9[8]};
             end
 
-            5'd2: begin // SUB A, s
+            6'd2: begin // SUB A, s
                 sum9 = {1'b0, in_a} - {1'b0, in_b};
                 res  = sum9[7:0];
                 half_carry = (in_a[3:0] < in_b[3:0]);
@@ -86,7 +88,7 @@ module z80_alu (
                 out_f = {res[7], (res == 8'h00), res[5], half_carry, res[3], overflow, 1'b1, sum9[8]};
             end
 
-            5'd3: begin // SBC A, s
+            6'd3: begin // SBC A, s
                 sum9 = {1'b0, in_a} - {1'b0, in_b} - {8'h00, carry_in};
                 res  = sum9[7:0];
                 half_carry = (in_a[3:0] < (in_b[3:0] + {3'b0, carry_in}));
@@ -94,22 +96,22 @@ module z80_alu (
                 out_f = {res[7], (res == 8'h00), res[5], half_carry, res[3], overflow, 1'b1, sum9[8]};
             end
 
-            5'd4: begin // AND s
+            6'd4: begin // AND s
                 res = in_a & in_b;
                 out_f = {res[7], (res == 8'h00), res[5], 1'b1, res[3], parity8(res), 1'b0, 1'b0};
             end
 
-            5'd5: begin // XOR s
+            6'd5: begin // XOR s
                 res = in_a ^ in_b;
                 out_f = {res[7], (res == 8'h00), res[5], 1'b0, res[3], parity8(res), 1'b0, 1'b0};
             end
 
-            5'd6: begin // OR s
+            6'd6: begin // OR s
                 res = in_a | in_b;
                 out_f = {res[7], (res == 8'h00), res[5], 1'b0, res[3], parity8(res), 1'b0, 1'b0};
             end
 
-            5'd7: begin // CP s (Compare: A - in_b, but keep A unchanged)
+            6'd7: begin // CP s (Compare: A - in_b, but keep A unchanged)
                 sum9 = {1'b0, in_a} - {1'b0, in_b};
                 res  = in_a; // A stays unchanged
                 half_carry = (in_a[3:0] < in_b[3:0]);
@@ -117,7 +119,7 @@ module z80_alu (
                 out_f = {sum9[7], (sum9[7:0] == 8'h00), in_b[5], half_carry, in_b[3], overflow, 1'b1, sum9[8]};
             end
 
-            5'd8: begin // INC s
+            6'd8: begin // INC s
                 res = in_a + 8'd1;
                 half_carry = (in_a[3:0] == 4'hF);
                 overflow   = (in_a == 8'h7F);
@@ -125,7 +127,7 @@ module z80_alu (
                 out_f = {res[7], (res == 8'h00), res[5], half_carry, res[3], overflow, 1'b0, in_f[0]};
             end
 
-            5'd9: begin // DEC s
+            6'd9: begin // DEC s
                 res = in_a - 8'd1;
                 half_carry = (in_a[3:0] == 4'h0);
                 overflow   = (in_a == 8'h80);
@@ -133,7 +135,7 @@ module z80_alu (
                 out_f = {res[7], (res == 8'h00), res[5], half_carry, res[3], overflow, 1'b1, in_f[0]};
             end
 
-            5'd10: begin // DAA (Decimal Adjust Accumulator)
+            6'd10: begin // DAA (Decimal Adjust Accumulator)
                 daa_corr = 8'h00;
                 daa_c = in_f[0];
                 daa_h = 1'b0;
@@ -162,12 +164,12 @@ module z80_alu (
                 out_f = {res[7], (res == 8'h00), res[5], daa_h, res[3], parity8(res), in_f[1], daa_c};
             end
 
-            5'd11: begin // CPL (Complement A)
+            6'd11: begin // CPL (Complement A)
                 res = ~in_a;
                 out_f = {in_f[7], in_f[6], res[5], 1'b1, res[3], in_f[2], 1'b1, in_f[0]};
             end
 
-            5'd12: begin // NEG (Negate A: 0 - A)
+            6'd12: begin // NEG (Negate A: 0 - A)
                 sum9 = {1'b0, 8'h00} - {1'b0, in_a};
                 res  = sum9[7:0];
                 half_carry = (in_a[3:0] != 4'h0);
@@ -175,42 +177,107 @@ module z80_alu (
                 out_f = {res[7], (res == 8'h00), res[5], half_carry, res[3], overflow, 1'b1, (in_a != 8'h00)};
             end
 
-            5'd13: begin // CCF (Complement Carry Flag)
+            6'd13: begin // CCF (Complement Carry Flag)
                 res = in_a;
                 out_f = {in_f[7], in_f[6], res[5], in_f[0], res[3], in_f[2], 1'b0, ~in_f[0]};
             end
 
-            5'd14: begin // SCF (Set Carry Flag)
+            6'd14: begin // SCF (Set Carry Flag)
                 res = in_a;
                 out_f = {in_f[7], in_f[6], res[5], 1'b0, res[3], in_f[2], 1'b0, 1'b1};
             end
 
-            5'd15: begin // RLCA (Rotate Left Circular Accumulator)
+            6'd15: begin // RLCA (Rotate Left Circular Accumulator)
                 res = {in_a[6:0], in_a[7]};
                 out_f = {in_f[7], in_f[6], res[5], 1'b0, res[3], in_f[2], 1'b0, in_a[7]};
             end
 
-            5'd16: begin // RRCA (Rotate Right Circular Accumulator)
+            6'd16: begin // RRCA (Rotate Right Circular Accumulator)
                 res = {in_a[0], in_a[7:1]};
                 out_f = {in_f[7], in_f[6], res[5], 1'b0, res[3], in_f[2], 1'b0, in_a[0]};
             end
 
-            5'd17: begin // RLA (Rotate Left through Carry Accumulator)
+            6'd17: begin // RLA (Rotate Left through Carry Accumulator)
                 res = {in_a[6:0], in_f[0]};
                 out_f = {in_f[7], in_f[6], res[5], 1'b0, res[3], in_f[2], 1'b0, in_a[7]};
             end
 
-            5'd18: begin // RRA (Rotate Right through Carry Accumulator)
+            6'd18: begin // RRA (Rotate Right through Carry Accumulator)
                 res = {in_f[0], in_a[7:1]};
                 out_f = {in_f[7], in_f[6], res[5], 1'b0, res[3], in_f[2], 1'b0, in_a[0]};
             end
 
-            5'd19: begin // ADD16 (ADD HL, ss)
+            6'd19: begin // ADD16 (ADD HL, ss)
                 sum17 = {1'b0, in_a16} + {1'b0, in_b16};
                 out_res16 = sum17[15:0];
                 half_carry16 = ({1'b0, in_a16[11:0]} + {1'b0, in_b16[11:0]}) >= 13'h1000;
                 // S, Z, PV 不変、N=0、H=bit11キャリー、C=bit15キャリー
                 out_f = {in_f[7:5], half_carry16, in_f[3:2], 1'b0, sum17[16]};
+            end
+
+            // CB プレフィックス: シフト / ローテート (20..27)
+            6'd20: begin // RLC (Rotate Left Circular)
+                res = {in_a[6:0], in_a[7]};
+                out_f = {res[7], (res == 8'h00), res[5], 1'b0, res[3], parity8(res), 1'b0, in_a[7]};
+            end
+
+            6'd21: begin // RRC (Rotate Right Circular)
+                res = {in_a[0], in_a[7:1]};
+                out_f = {res[7], (res == 8'h00), res[5], 1'b0, res[3], parity8(res), 1'b0, in_a[0]};
+            end
+
+            6'd22: begin // RL (Rotate Left through Carry)
+                res = {in_a[6:0], in_f[0]};
+                out_f = {res[7], (res == 8'h00), res[5], 1'b0, res[3], parity8(res), 1'b0, in_a[7]};
+            end
+
+            6'd23: begin // RR (Rotate Right through Carry)
+                res = {in_f[0], in_a[7:1]};
+                out_f = {res[7], (res == 8'h00), res[5], 1'b0, res[3], parity8(res), 1'b0, in_a[0]};
+            end
+
+            6'd24: begin // SLA (Shift Left Arithmetic)
+                res = {in_a[6:0], 1'b0};
+                out_f = {res[7], (res == 8'h00), res[5], 1'b0, res[3], parity8(res), 1'b0, in_a[7]};
+            end
+
+            6'd25: begin // SRA (Shift Right Arithmetic)
+                res = {in_a[7], in_a[7:1]};
+                out_f = {res[7], (res == 8'h00), res[5], 1'b0, res[3], parity8(res), 1'b0, in_a[0]};
+            end
+
+            6'd26: begin // SLL (Shift Left Logical / SLS)
+                res = {in_a[6:0], 1'b1};
+                out_f = {res[7], (res == 8'h00), res[5], 1'b0, res[3], parity8(res), 1'b0, in_a[7]};
+            end
+
+            6'd27: begin // SRL (Shift Right Logical)
+                res = {1'b0, in_a[7:1]};
+                out_f = {res[7], (res == 8'h00), res[5], 1'b0, res[3], parity8(res), 1'b0, in_a[0]};
+            end
+
+            // CB プレフィックス: ビット操作 (28..30)
+            6'd28: begin // BIT b, r
+                res = in_a;
+                // S=(b==7?in_a[7]:0), Z=~in_a[b], Y=in_a[5], H=1, X=in_a[3], P/V=~in_a[b], N=0, C=in_f[0]
+                out_f = {((in_b[2:0] == 3'd7) ? in_a[7] : 1'b0),
+                         ~in_a[in_b[2:0]],
+                         in_a[5],
+                         1'b1,
+                         in_a[3],
+                         ~in_a[in_b[2:0]],
+                         1'b0,
+                         in_f[0]};
+            end
+
+            6'd29: begin // RES b, r
+                res = in_a & ~(8'd1 << in_b[2:0]);
+                out_f = in_f;
+            end
+
+            6'd30: begin // SET b, r
+                res = in_a | (8'd1 << in_b[2:0]);
+                out_f = in_f;
             end
 
             default: begin

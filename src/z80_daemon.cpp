@@ -90,6 +90,7 @@ CpuSnapshot Z80Daemon::capture_snapshot() {
     s.step_count = step_count_;
     s.cycle_count = cycle_count_;
     s.pc = top_->probe_pc;
+    s.prefix = top_->probe_prefix;
     s.opcode = top_->probe_opcode;
     s.af = top_->probe_af;
     s.bc = top_->probe_bc;
@@ -121,9 +122,20 @@ CpuSnapshot Z80Daemon::capture_snapshot() {
     const char* qq_names[] = {"BC", "DE", "HL", "AF"};
     const char* cc_names[] = {"NZ", "Z", "NC", "C", "PO", "PE", "P", "M"};
     const char* alu_names[] = {"ADD A,", "ADC A,", "SUB", "SBC A,", "AND", "XOR", "OR", "CP"};
+    const char* cb_rot_names[] = {"RLC", "RRC", "RL", "RR", "SLA", "SRA", "SLL", "SRL"};
 
     uint8_t op = s.opcode;
-    if (op == 0x00) s.executed_mnemonic = "NOP";
+    if (s.prefix == 1) { // Phase 4: CB プレフィックス
+        if ((op & 0xC0) == 0x00) {
+            s.executed_mnemonic = std::string(cb_rot_names[(op >> 3) & 7]) + " " + r_names[op & 7];
+        } else if ((op & 0xC0) == 0x40) {
+            s.executed_mnemonic = "BIT " + std::to_string((op >> 3) & 7) + ", " + r_names[op & 7];
+        } else if ((op & 0xC0) == 0x80) {
+            s.executed_mnemonic = "RES " + std::to_string((op >> 3) & 7) + ", " + r_names[op & 7];
+        } else {
+            s.executed_mnemonic = "SET " + std::to_string((op >> 3) & 7) + ", " + r_names[op & 7];
+        }
+    } else if (op == 0x00) s.executed_mnemonic = "NOP";
     else if (op == 0x76) s.executed_mnemonic = "HALT";
     else if (op == 0xEB) s.executed_mnemonic = "EX DE, HL";
     else if (op == 0x08) s.executed_mnemonic = "EX AF, AF'";
@@ -276,9 +288,19 @@ void Z80Daemon::run_standalone_test(size_t max_steps) {
 
     for (size_t i = 1; i <= max_steps; ++i) {
         auto s = step();
+        std::string op_str;
+        if (s.prefix == 1) {
+            std::ostringstream ss;
+            ss << "0xcb 0x" << std::hex << std::setw(2) << std::setfill('0') << (int)s.opcode;
+            op_str = ss.str();
+        } else {
+            std::ostringstream ss;
+            ss << "0x" << std::hex << std::setw(2) << std::setfill('0') << (int)s.opcode;
+            op_str = ss.str();
+        }
         std::cout << "[Step " << std::setw(2) << s.step_count << "] "
                   << "PC: 0x" << std::hex << std::setw(4) << std::setfill('0') << s.pc
-                  << " | Op: 0x" << std::setw(2) << (int)s.opcode
+                  << " | Op: " << op_str
                   << " (" << s.executed_mnemonic << ")"
                   << " | A: 0x" << std::setw(2) << (s.af >> 8)
                   << " | B: 0x" << std::setw(2) << (s.bc >> 8)

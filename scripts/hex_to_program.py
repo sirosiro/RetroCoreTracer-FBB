@@ -55,6 +55,31 @@ def disassemble_z80(mem, min_addr, max_addr):
         if op == 0x00:
             mnem = "NOP"
             comment = "; No operation"
+        elif op == 0xCB:
+            cb_op = mem[pc]; pc += 1; bytes_list.append(f"{cb_op:02X}")
+            r_target = r8[cb_op & 0x07]
+            bit_idx = (cb_op >> 3) & 0x07
+            grp = (cb_op >> 6) & 0x03
+            if grp == 0:
+                cb_rot = ["RLC", "RRC", "RL", "RR", "SLA", "SRA", "SLL", "SRL"]
+                mnem = cb_rot[bit_idx]
+                dest = r_target
+                comment = f"; Shift/Rotate {r_target}"
+            elif grp == 1:
+                mnem = "BIT"
+                dest = f"{bit_idx},"
+                src = r_target
+                comment = f"; Test bit {bit_idx} of {r_target}"
+            elif grp == 2:
+                mnem = "RES"
+                dest = f"{bit_idx},"
+                src = r_target
+                comment = f"; Reset bit {bit_idx} of {r_target}"
+            else:
+                mnem = "SET"
+                dest = f"{bit_idx},"
+                src = r_target
+                comment = f"; Set bit {bit_idx} of {r_target}"
         elif op == 0x76:
             mnem = "HALT"
             comment = "; Halt CPU"

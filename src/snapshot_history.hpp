@@ -12,6 +12,7 @@ struct CpuSnapshot {
     uint64_t step_count = 0;
     uint64_t cycle_count = 0;
     uint16_t pc = 0;
+    uint8_t prefix = 0;
     uint8_t opcode = 0;
     std::string executed_mnemonic = "";
 
@@ -54,6 +55,7 @@ struct CpuSnapshot {
            << "\"step\":" << step_count << ","
            << "\"cycles\":" << cycle_count << ","
            << "\"pc\":\"" << to_hex16(pc) << "\","
+           << "\"prefix\":\"" << to_hex8(prefix) << "\","
            << "\"opcode\":\"" << to_hex8(opcode) << "\","
            << "\"executed_mnemonic\":\"" << executed_mnemonic << "\","
            << "\"registers\":{"

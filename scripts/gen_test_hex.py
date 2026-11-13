@@ -92,6 +92,37 @@ def generate_phase3_hex(output_path: str):
     }
     write_intel_hex(output_path, addr_map)
 
+def generate_phase4_hex(output_path):
+    """
+    Phase 4: CB プレフィックス全 256 命令 (シフト/ローテート/ビット操作/レジスタ & (HL))
+    """
+    code = bytes([
+        0x3E, 0x85,       # 0000: LD A, $85 (10000101)
+        0xCB, 0x07,       # 0002: RLC A -> $0B (00001011), C=1
+        0xCB, 0x0F,       # 0004: RRC A -> $85 (10000101), C=1
+        0x37,             # 0006: SCF (C=1)
+        0xCB, 0x17,       # 0007: RL A  -> $0B (bit0=old C=1), C=1
+        0xAF,             # 0009: XOR A (A=0, C=0)
+        0x06, 0x55,       # 000A: LD B, $55 (01010101)
+        0xCB, 0x20,       # 000C: SLA B -> $AA (10101010), C=0
+        0xCB, 0x28,       # 000E: SRA B -> $D5 (11010101: 符号維持), C=0
+        0xCB, 0x38,       # 0010: SRL B -> $6A (01101010: 0挿入), C=1
+        0xCB, 0x40,       # 0012: BIT 0, B (bit0 of $6A is 0 -> Z=1, H=1)
+        0xCB, 0x48,       # 0014: BIT 1, B (bit1 of $6A is 1 -> Z=0, H=1)
+        0xCB, 0xC0,       # 0016: SET 0, B -> $6B
+        0xCB, 0x88,       # 0018: RES 1, B -> $69
+        # (HL) メモリアクセス検証
+        0x21, 0x00, 0x01, # 001A: LD HL, $0100
+        0x36, 0x81,       # 001D: LD (HL), $81
+        0xCB, 0x06,       # 001F: RLC (HL) -> (HL)=$03, C=1
+        0xCB, 0x4E,       # 0021: BIT 1, (HL) -> Z=0, H=1
+        0xCB, 0x86,       # 0023: RES 0, (HL) -> (HL)=$02
+        0xCB, 0xFE,       # 0025: SET 7, (HL) -> (HL)=$82
+        0x7E,             # 0027: LD A, (HL) -> A=$82
+        0x76              # 0028: HALT
+    ])
+    write_intel_hex(output_path, {0x0000: code})
+
 if __name__ == "__main__":
     out_dir = sys.argv[1] if len(sys.argv) > 1 else "examples"
     os.makedirs(out_dir, exist_ok=True)
@@ -99,4 +130,6 @@ if __name__ == "__main__":
     generate_phase2_hex(p2_file)
     p3_file = os.path.join(out_dir, "z80_test_03_branch_call_rst.hex")
     generate_phase3_hex(p3_file)
+    p4_file = os.path.join(out_dir, "z80_test_04_cb_bit_shift.hex")
+    generate_phase4_hex(p4_file)
 
