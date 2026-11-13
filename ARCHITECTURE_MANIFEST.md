@@ -48,6 +48,17 @@
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
+### 2.1 DPPA モジュラーペイン群 (panes/ & pane/)
+F-BB Dockview ワークスペースに対応した 7 つの独立特化型ペインと、共有状態ストア (`window.__RCT_STORE__`)：
+1. `rct-controller`: 実行制御卓 (Run/Pause, Step, Backstep, クロック周波数スライダー, リセット)
+2. `rct-code-view`: アセンブリ逆アセンブル・ステップ位置追従コードビュー
+3. `rct-canvas`: サイクル正確なハードウェア回路・バス信号伝播 (Bus Glow) アニメーションキャンバス
+4. `rct-registers`: Z80 主/副レジスタセット (AF, BC, DE, HL, IX, IY, SP, PC) およびフラグビット表示
+5. `rct-memory`: リアルタイム 64KB メモリダンプ & 差分ハイライトインスペクター
+6. `rct-stack`: コールスタック & スタックポインタ (SP) 追従ビュー
+7. `rct-breakpoints`: PC/メモリアクセス条件ブレークポイント管理
+- `retro-core-tracer` (`pane/`): レガシー統合型オールインワンペイン
+
 ---
 
 ## 3. 通信プロトコル規約 (JSON-RPC & Telemetry Interface)

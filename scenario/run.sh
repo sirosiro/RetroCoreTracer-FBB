@@ -52,12 +52,20 @@ if [ -f "$PLUGIN_DIR/scripts/hex_to_program.py" ]; then
     python3 "$PLUGIN_DIR/scripts/hex_to_program.py" "$HEX_PATH" "/tmp/rct_active_program.json" 2>/dev/null || true
 fi
 
-# Check if daemon is compiled
+# Check if daemon is compiled; auto-build via CMake if missing
+if [ ! -f "$PLUGIN_DIR/bin/rct_z80_daemon" ]; then
+    echo "[Scenario] Binary rct_z80_daemon not found. Auto-building via CMake..."
+    cmake -B "$PLUGIN_DIR/build" -S "$PLUGIN_DIR" >/dev/null 2>&1
+    cmake --build "$PLUGIN_DIR/build" >/dev/null 2>&1
+fi
+
 if [ -f "$PLUGIN_DIR/bin/rct_z80_daemon" ]; then
     echo "[Scenario] Starting RCT Z80 Daemon in background with HEX: $HEX_PATH"
     "$PLUGIN_DIR/bin/rct_z80_daemon" --hex "$HEX_PATH" --socket /tmp/rct_z80.sock > /tmp/rct_z80_daemon.log 2>&1 &
     DAEMON_PID=$!
     trap "kill $DAEMON_PID 2>/dev/null || true" EXIT INT TERM
+else
+    echo "[Scenario Warning] Failed to start rct_z80_daemon (binary not found)."
 fi
 
 if [ "$FBB_ACTIVE" = "1" ]; then
@@ -65,5 +73,11 @@ if [ "$FBB_ACTIVE" = "1" ]; then
     ./test_bin
 else
     # Direct execution or standalone lab
-    "$SCRIPT_DIR/../../FPGA-BoardlessBench/tests/scenario_runner.sh" "$SCRIPT_DIR" "$@"
+    RUNNER="${FBB_ROOT:-$SCRIPT_DIR/../../FPGA-BoardlessBench}/tests/scenario_runner.sh"
+    if [ -f "$RUNNER" ]; then
+        "$RUNNER" "$SCRIPT_DIR" "$@"
+    else
+        echo "[Scenario Error] F-BB scenario_runner.sh not found at: $RUNNER"
+        exit 1
+    fi
 fi
