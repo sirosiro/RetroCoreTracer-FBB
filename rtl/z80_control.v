@@ -45,6 +45,9 @@ module z80_control (
     input  wire [15:0] bc_out,
     input  wire [15:0] de_out,
     input  wire [15:0] sp_out,
+    input  wire [15:0] ix_out,
+    input  wire [15:0] iy_out,
+    output reg  [1:0]  index_mode, // 0: none, 1: IX, 2: IY
     input  wire [7:0]  flags_in_wire,
 
     // 交換命令
@@ -96,78 +99,90 @@ module z80_control (
     output reg         probe_bus_active,
     output wire        probe_instr_boundary,
     output wire [2:0]  probe_prefix,
-    output wire [5:0]  probe_state,
+    output wire [6:0]  probe_state,
     output reg         halted
 );
 
     // FSM ステート定義
-    localparam S_M1_T1           = 6'd0;
-    localparam S_M1_T2           = 6'd1;
-    localparam S_M1_T3           = 6'd2;
-    localparam S_M1_T4           = 6'd3;
-    localparam S_M2_T1_RD        = 6'd4;
-    localparam S_M2_T2_RD        = 6'd5;
-    localparam S_M3_T1_RD        = 6'd6;
-    localparam S_MEM_RD_T1       = 6'd7;
-    localparam S_MEM_WR_PREP     = 6'd8;
-    localparam S_MEM_WR_T1       = 6'd9;
-    localparam S_MEM_RMW_RD      = 6'd10;
-    localparam S_MEM_RMW_WR      = 6'd11;
-    localparam S_MEM_ALU_RD      = 6'd12;
-    localparam S_MEM_ALU_EXEC    = 6'd13;
-    localparam S_ALU_IMM_EXEC    = 6'd14;
-    localparam S_HALT            = 6'd15;
+    localparam S_M1_T1           = 7'd0;
+    localparam S_M1_T2           = 7'd1;
+    localparam S_M1_T3           = 7'd2;
+    localparam S_M1_T4           = 7'd3;
+    localparam S_M2_T1_RD        = 7'd4;
+    localparam S_M2_T2_RD        = 7'd5;
+    localparam S_M3_T1_RD        = 7'd6;
+    localparam S_MEM_RD_T1       = 7'd7;
+    localparam S_MEM_WR_PREP     = 7'd8;
+    localparam S_MEM_WR_T1       = 7'd9;
+    localparam S_MEM_RMW_RD      = 7'd10;
+    localparam S_MEM_RMW_WR      = 7'd11;
+    localparam S_MEM_ALU_RD      = 7'd12;
+    localparam S_MEM_ALU_EXEC    = 7'd13;
+    localparam S_ALU_IMM_EXEC    = 7'd14;
+    localparam S_HALT            = 7'd15;
 
     // Phase 3 追加ステート
-    localparam S_PUSH_HI         = 6'd16;
-    localparam S_PUSH_LO         = 6'd17;
-    localparam S_POP_HI          = 6'd18;
-    localparam S_POP_EXEC        = 6'd19;
-    localparam S_CALL_FETCH_HI   = 6'd20;
-    localparam S_CALL_PUSH_HI    = 6'd21;
-    localparam S_CALL_PUSH_LO    = 6'd22;
-    localparam S_RET_RD_HI       = 6'd23;
-    localparam S_RET_EXEC        = 6'd24;
-    localparam S_RST_PUSH_HI     = 6'd25;
-    localparam S_RST_PUSH_LO     = 6'd26;
-    localparam S_LD_NN_HL_WR_HI  = 6'd27;
-    localparam S_LD_HL_NN_RD_HI  = 6'd28;
-    localparam S_LD_HL_NN_EXEC   = 6'd29;
-    localparam S_EX_SP_HL_RD_HI  = 6'd30;
-    localparam S_EX_SP_HL_WR_LO  = 6'd31;
-    localparam S_EX_SP_HL_WR_HI  = 6'd32;
+    localparam S_PUSH_HI         = 7'd16;
+    localparam S_PUSH_LO         = 7'd17;
+    localparam S_POP_HI          = 7'd18;
+    localparam S_POP_EXEC        = 7'd19;
+    localparam S_CALL_FETCH_HI   = 7'd20;
+    localparam S_CALL_PUSH_HI    = 7'd21;
+    localparam S_CALL_PUSH_LO    = 7'd22;
+    localparam S_RET_RD_HI       = 7'd23;
+    localparam S_RET_EXEC        = 7'd24;
+    localparam S_RST_PUSH_HI     = 7'd25;
+    localparam S_RST_PUSH_LO     = 7'd26;
+    localparam S_LD_NN_HL_WR_HI  = 7'd27;
+    localparam S_LD_HL_NN_RD_HI  = 7'd28;
+    localparam S_LD_HL_NN_EXEC   = 7'd29;
+    localparam S_EX_SP_HL_RD_HI  = 7'd30;
+    localparam S_EX_SP_HL_WR_LO  = 7'd31;
+    localparam S_EX_SP_HL_WR_HI  = 7'd32;
 
     // Phase 4 追加ステート (CB プレフィックス全 256 命令)
-    localparam S_CB_FETCH_T1     = 6'd33;
-    localparam S_CB_FETCH_T2     = 6'd34;
-    localparam S_CB_EXEC         = 6'd35;
-    localparam S_CB_MEM_RD_T1    = 6'd36;
-    localparam S_CB_MEM_RD_T2    = 6'd37;
-    localparam S_CB_MEM_BIT_EX   = 6'd38;
-    localparam S_CB_MEM_WR_T1    = 6'd39;
-    localparam S_CB_MEM_WR_T2    = 6'd40;
+    localparam S_CB_FETCH_T1     = 7'd33;
+    localparam S_CB_FETCH_T2     = 7'd34;
+    localparam S_CB_EXEC         = 7'd35;
+    localparam S_CB_MEM_RD_T1    = 7'd36;
+    localparam S_CB_MEM_RD_T2    = 7'd37;
+    localparam S_CB_MEM_BIT_EX   = 7'd38;
+    localparam S_CB_MEM_WR_T1    = 7'd39;
+    localparam S_CB_MEM_WR_T2    = 7'd40;
 
     // Phase 5 追加ステート (ED プレフィックス全拡張命令 & I/O)
-    localparam S_ED_FETCH_T2     = 6'd41;
-    localparam S_ED_EXEC         = 6'd42;
-    localparam S_ED_NN_RD_LO     = 6'd43;
-    localparam S_ED_NN_RD_HI     = 6'd44;
-    localparam S_ED_NN_WR_HI     = 6'd45;
-    localparam S_ED_NN_EXEC      = 6'd46;
-    localparam S_ED_LDIR_RD      = 6'd47;
-    localparam S_ED_LDIR_WR      = 6'd48;
-    localparam S_ED_LDIR_EXEC    = 6'd49;
-    localparam S_ED_CPIR_RD      = 6'd50;
-    localparam S_ED_CPIR_EXEC    = 6'd51;
-    localparam S_ED_RRD_RD       = 6'd52;
-    localparam S_ED_RRD_WR       = 6'd53;
-    localparam S_ED_RRD_EXEC     = 6'd54;
-    localparam S_IO_RD_T1        = 6'd55;
-    localparam S_IO_RD_T2        = 6'd56;
-    localparam S_IO_WR_T1        = 6'd57;
-    localparam S_IO_WR_T2        = 6'd58;
+    localparam S_ED_FETCH_T2     = 7'd41;
+    localparam S_ED_EXEC         = 7'd42;
+    localparam S_ED_NN_RD_LO     = 7'd43;
+    localparam S_ED_NN_RD_HI     = 7'd44;
+    localparam S_ED_NN_WR_HI     = 7'd45;
+    localparam S_ED_NN_EXEC      = 7'd46;
+    localparam S_ED_LDIR_RD      = 7'd47;
+    localparam S_ED_LDIR_WR      = 7'd48;
+    localparam S_ED_LDIR_EXEC    = 7'd49;
+    localparam S_ED_CPIR_RD      = 7'd50;
+    localparam S_ED_CPIR_EXEC    = 7'd51;
+    localparam S_ED_RRD_RD       = 7'd52;
+    localparam S_ED_RRD_WR       = 7'd53;
+    localparam S_ED_RRD_EXEC     = 7'd54;
+    localparam S_IO_RD_T1        = 7'd55;
+    localparam S_IO_RD_T2        = 7'd56;
+    localparam S_IO_WR_T1        = 7'd57;
+    localparam S_IO_WR_T2        = 7'd58;
 
-    reg [5:0]  state;
+    // Phase 6 追加ステート (DD / FD / DD CB / FD CB インデックス命令)
+    localparam S_IDX_DISP_FETCH  = 7'd59;
+    localparam S_IDX_IMM_N       = 7'd60;
+    localparam S_IDX_MEM_RD      = 7'd61;
+    localparam S_IDX_ALU_RD      = 7'd62;
+    localparam S_IDX_RMW_RD      = 7'd63;
+    localparam S_IDX_RMW_WR      = 7'd64;
+    localparam S_IDX_CB_DISP     = 7'd65;
+    localparam S_IDX_CB_OP       = 7'd66;
+    localparam S_IDX_CB_MEM      = 7'd67;
+    localparam S_IDX_CB_WR       = 7'd68;
+
+    reg [6:0]  state;
     reg [7:0]  opcode;
     reg [7:0]  imm_low;
     reg [7:0]  mem_data_buf;
@@ -181,8 +196,10 @@ module z80_control (
     reg [7:0]  cb_opcode;
     reg        prefix_ed;
     reg [7:0]  ed_opcode;
+    reg        prefix_dd;
+    reg        prefix_fd;
 
-    assign probe_instr_boundary = (state == S_M1_T1 && !prefix_cb && !prefix_ed);
+    assign probe_instr_boundary = (state == S_M1_T1 && !prefix_cb && !prefix_ed && !prefix_dd && !prefix_fd);
     assign probe_state          = state;
 
     /* verilator lint_off UNUSED */
@@ -256,6 +273,9 @@ module z80_control (
         iff1_val         = 1'b0;
         iff2_val         = 1'b0;
 
+        // Phase 6 デフォルト
+        index_mode       = (prefix_dd ? 2'd1 : prefix_fd ? 2'd2 : 2'd0);
+
         // ソースレジスタセレクタ
         if (opcode[7:6] == 2'b01 || opcode[7:6] == 2'b10) begin
             reg_src_sel = opcode[2:0];
@@ -266,7 +286,7 @@ module z80_control (
         // ALU オペランド & 演算選択
         alu_in_a   = acc_out;
         alu_in_b   = reg_src_data;
-        alu_in_a16 = hl_out;
+        alu_in_a16 = (prefix_dd ? ix_out : prefix_fd ? iy_out : hl_out);
         alu_in_b16 = bc_out;
         alu_op     = 6'd0;
 
@@ -280,13 +300,13 @@ module z80_control (
                     8'hEB: ex_de_hl = 1'b1;     // EX DE, HL
                     8'h08: ex_af_af_alt = 1'b1; // EX AF, AF'
                     8'hD9: exx = 1'b1;          // EXX
-                    8'hF9: begin                // LD SP, HL
+                    8'hF9: begin                // LD SP, HL / IX / IY
                         sp_wr_en = 1'b1;
-                        sp_new = hl_out;
+                        sp_new = (prefix_dd ? ix_out : prefix_fd ? iy_out : hl_out);
                     end
-                    8'hE9: begin                // JP (HL)
+                    8'hE9: begin                // JP (HL) / JP (IX) / JP (IY)
                         pc_load = 1'b1;
-                        pc_new = hl_out;
+                        pc_new = (prefix_dd ? ix_out : prefix_fd ? iy_out : hl_out);
                     end
                     8'hF3: begin                // DI
                         iff_wr_en = 1'b1;
@@ -309,12 +329,14 @@ module z80_control (
                     reg_dst_sel = opcode[5:3];
                     reg_wr_data = reg_src_data;
                 end else if (opcode[7:6] == 2'b00) begin
-                    if (opcode[3:0] == 4'b1001) begin // ADD HL, ss
-                        alu_in_a16 = hl_out;
-                        alu_in_b16 = get_pair16(opcode[5:4], bc_out, de_out, hl_out, sp_out);
+                    if (opcode[3:0] == 4'b1001) begin // ADD HL, ss / ADD IX, ss / ADD IY, ss
+                        alu_in_a16 = (prefix_dd ? ix_out : prefix_fd ? iy_out : hl_out);
+                        alu_in_b16 = ((prefix_dd || prefix_fd) && opcode[5:4] == 2'd2) ?
+                                     (prefix_dd ? ix_out : iy_out) :
+                                     get_pair16(opcode[5:4], bc_out, de_out, hl_out, sp_out);
                         alu_op     = 6'd19; // ADD16
                         pair_wr_en = 1'b1;
-                        pair_sel = 2'd2; // HL
+                        pair_sel = 2'd2; // HL / IX / IY
                         pair_wr_data = alu_out_res16;
                         flags_wr_en = 1'b1;
                     end else if (opcode[3:0] == 4'b0011) begin // INC ss
@@ -324,7 +346,9 @@ module z80_control (
                         end else begin
                             pair_wr_en = 1'b1;
                             pair_sel = opcode[5:4];
-                            pair_wr_data = get_pair16(opcode[5:4], bc_out, de_out, hl_out, sp_out) + 16'd1;
+                            pair_wr_data = ((prefix_dd || prefix_fd) && opcode[5:4] == 2'd2) ?
+                                           ((prefix_dd ? ix_out : iy_out) + 16'd1) :
+                                           (get_pair16(opcode[5:4], bc_out, de_out, hl_out, sp_out) + 16'd1);
                         end
                     end else if (opcode[3:0] == 4'b1011) begin // DEC ss
                         if (opcode[5:4] == 2'd3) begin
@@ -333,7 +357,9 @@ module z80_control (
                         end else begin
                             pair_wr_en = 1'b1;
                             pair_sel = opcode[5:4];
-                            pair_wr_data = get_pair16(opcode[5:4], bc_out, de_out, hl_out, sp_out) - 16'd1;
+                            pair_wr_data = ((prefix_dd || prefix_fd) && opcode[5:4] == 2'd2) ?
+                                           ((prefix_dd ? ix_out : iy_out) - 16'd1) :
+                                           (get_pair16(opcode[5:4], bc_out, de_out, hl_out, sp_out) - 16'd1);
                         end
                     end else if (opcode[2:0] == 3'b100) begin // INC r
                         alu_in_a = reg_src_data;
@@ -753,6 +779,87 @@ module z80_control (
                 end
             end
 
+            // Phase 6: インデックス (IX+d) / (IY+d) 組合せ制御
+            S_IDX_DISP_FETCH: begin
+                pc_inc = 1'b1; // ディスプレースメント d 読出時に PC++
+            end
+
+            S_IDX_IMM_N: begin
+                pc_inc = 1'b1; // 即値 n 読出時に PC++
+            end
+
+            S_IDX_MEM_RD: begin // LD r, (IX+d) コミット
+                reg_wr_en = 1'b1;
+                reg_dst_sel = opcode[5:3];
+                reg_wr_data = bus_din;
+            end
+
+            S_IDX_ALU_RD: begin // ALU A, (IX+d) コミット
+                alu_in_a = acc_out;
+                alu_in_b = bus_din;
+                flags_wr_en = 1'b1;
+                case (opcode[5:3])
+                    3'd0: alu_op = 6'd0;  // ADD
+                    3'd1: alu_op = 6'd1;  // ADC
+                    3'd2: alu_op = 6'd2;  // SUB
+                    3'd3: alu_op = 6'd3;  // SBC
+                    3'd4: alu_op = 6'd4;  // AND
+                    3'd5: alu_op = 6'd5;  // XOR
+                    3'd6: alu_op = 6'd6;  // OR
+                    3'd7: alu_op = 6'd7;  // CP
+                endcase
+                if (opcode[5:3] != 3'd7) begin
+                    reg_wr_en = 1'b1;
+                    reg_dst_sel = 3'd7; // A
+                    reg_wr_data = alu_out_res;
+                end
+            end
+
+            S_IDX_RMW_WR: begin // INC / DEC (IX+d) 演算 & フラグ計算
+                alu_op = (opcode == 8'h34) ? 6'd8 : 6'd9;
+                alu_in_a = mem_data_buf;
+                flags_wr_en = 1'b1;
+            end
+
+            S_IDX_CB_DISP: begin
+                pc_inc = 1'b1; // DD CB d op の d 読出時に PC++
+            end
+
+            S_IDX_CB_OP: begin
+                pc_inc = 1'b1; // DD CB d op の op 読出時に PC++
+            end
+
+            S_IDX_CB_MEM: begin // BIT b, (IX+d) フラグ判定
+                alu_in_a = bus_din;
+                alu_in_b = {5'd0, cb_opcode[5:3]};
+                if ((cb_opcode & 8'hC0) == 8'h40) begin
+                    alu_op = 6'd28; // BIT
+                    flags_wr_en = 1'b1;
+                end
+            end
+
+            S_IDX_CB_WR: begin // RES / SET / Shift / Rotate 演算
+                alu_in_a = mem_data_buf;
+                alu_in_b = {5'd0, cb_opcode[5:3]};
+                if ((cb_opcode & 8'hC0) == 8'h80) begin
+                    alu_op = 6'd29; // RES
+                end else if ((cb_opcode & 8'hC0) == 8'hC0) begin
+                    alu_op = 6'd30; // SET
+                end else begin
+                    flags_wr_en = 1'b1;
+                    case (cb_opcode[5:3])
+                        3'd0: alu_op = 6'd20; // RLC
+                        3'd1: alu_op = 6'd21; // RRC
+                        3'd2: alu_op = 6'd22; // RL
+                        3'd3: alu_op = 6'd23; // RR
+                        3'd4: alu_op = 6'd24; // SLA
+                        3'd5: alu_op = 6'd25; // SRA
+                        3'd6: alu_op = 6'd26; // SLL
+                        3'd7: alu_op = 6'd27; // SRL
+                    endcase
+                end
+            end
+
             default: ;
         endcase
     end
@@ -781,6 +888,8 @@ module z80_control (
             cb_opcode <= 8'h00;
             prefix_ed <= 1'b0;
             ed_opcode <= 8'h00;
+            prefix_dd <= 1'b0;
+            prefix_fd <= 1'b0;
             probe_opcode <= 8'h00;
             probe_bus_active <= 1'b0;
             halted <= 1'b0;
@@ -797,6 +906,8 @@ module z80_control (
             cb_opcode <= 8'h00;
             prefix_ed <= 1'b0;
             ed_opcode <= 8'h00;
+            prefix_dd <= 1'b0;
+            prefix_fd <= 1'b0;
             halted <= restore_halted;
         end else begin
             probe_bus_active <= 1'b0;
@@ -814,7 +925,8 @@ module z80_control (
                 S_M1_T2: begin
                     opcode <= bus_din;
                     probe_opcode <= bus_din;
-                    probe_prefix_latch <= 3'd0;
+                    if (!prefix_dd && !prefix_fd && !prefix_cb && !prefix_ed)
+                        probe_prefix_latch <= 3'd0;
                     bus_rd_n <= 1'b1;
                     bus_mreq_n <= 1'b1;
                     bus_m1_n <= 1'b1;
@@ -823,19 +935,28 @@ module z80_control (
 
                 S_M1_T3: begin
                     case (opcode)
-                        8'h00: state <= S_M1_T1; // NOP
+                        8'h00: begin prefix_dd <= 1'b0; prefix_fd <= 1'b0; state <= S_M1_T1; end // NOP
                         8'h76: begin halted <= 1'b1; state <= S_HALT; end // HALT
 
                         // Phase 4: CB プレフィックス
                         8'hCB: begin
-                            prefix_cb <= 1'b1;
-                            probe_prefix_latch <= 3'd1;
-                            bus_addr <= pc_in;
-                            bus_mreq_n <= 1'b0;
-                            bus_rd_n <= 1'b0;
-                            bus_m1_n <= 1'b0;
-                            probe_bus_active <= 1'b1;
-                            state <= S_CB_FETCH_T2;
+                            if (prefix_dd || prefix_fd) begin
+                                probe_prefix_latch <= prefix_dd ? 3'd5 : 3'd6;
+                                bus_addr <= pc_in;
+                                bus_mreq_n <= 1'b0;
+                                bus_rd_n <= 1'b0;
+                                probe_bus_active <= 1'b1;
+                                state <= S_IDX_CB_DISP;
+                            end else begin
+                                prefix_cb <= 1'b1;
+                                probe_prefix_latch <= 3'd1;
+                                bus_addr <= pc_in;
+                                bus_mreq_n <= 1'b0;
+                                bus_rd_n <= 1'b0;
+                                bus_m1_n <= 1'b0;
+                                probe_bus_active <= 1'b1;
+                                state <= S_CB_FETCH_T2;
+                            end
                         end
 
                         // Phase 5: ED プレフィックス
@@ -848,6 +969,32 @@ module z80_control (
                             bus_m1_n <= 1'b0;
                             probe_bus_active <= 1'b1;
                             state <= S_ED_FETCH_T2;
+                        end
+
+                        // Phase 6: DD プレフィックス (IX)
+                        8'hDD: begin
+                            prefix_dd <= 1'b1;
+                            prefix_fd <= 1'b0;
+                            probe_prefix_latch <= 3'd3;
+                            bus_addr <= pc_in;
+                            bus_mreq_n <= 1'b0;
+                            bus_rd_n <= 1'b0;
+                            bus_m1_n <= 1'b0;
+                            probe_bus_active <= 1'b1;
+                            state <= S_M1_T1;
+                        end
+
+                        // Phase 6: FD プレフィックス (IY)
+                        8'hFD: begin
+                            prefix_dd <= 1'b0;
+                            prefix_fd <= 1'b1;
+                            probe_prefix_latch <= 3'd4;
+                            bus_addr <= pc_in;
+                            bus_mreq_n <= 1'b0;
+                            bus_rd_n <= 1'b0;
+                            bus_m1_n <= 1'b0;
+                            probe_bus_active <= 1'b1;
+                            state <= S_M1_T1;
                         end
 
                         // Phase 5: I/O 命令 (IN A, (n) / OUT (n), A)
@@ -867,11 +1014,11 @@ module z80_control (
                         end
 
                         // DI / EI
-                        8'hF3, 8'hFB: state <= S_M1_T1;
+                        8'hF3, 8'hFB: begin prefix_dd <= 1'b0; prefix_fd <= 1'b0; state <= S_M1_T1; end
 
                         // 交換命令
-                        8'hEB, 8'h08, 8'hD9: state <= S_M1_T1; // EX DE, HL / EX AF, AF' / EXX
-                        8'hE3: begin // EX (SP), HL
+                        8'hEB, 8'h08, 8'hD9: begin prefix_dd <= 1'b0; prefix_fd <= 1'b0; state <= S_M1_T1; end // EX DE, HL / EX AF, AF' / EXX
+                        8'hE3: begin // EX (SP), HL / EX (SP), IX / EX (SP), IY
                             bus_addr <= sp_out;
                             bus_mreq_n <= 1'b0;
                             bus_rd_n <= 1'b0;
@@ -885,15 +1032,19 @@ module z80_control (
                             state <= S_M1_T4;
                         end
 
-                        // 16-bit 演算 (ADD HL, ss / INC ss / DEC ss)
+                        // 16-bit 演算 (ADD HL/IX/IY, ss / INC ss / DEC ss)
                         8'h09, 8'h19, 8'h29, 8'h39, // ADD HL, ss
                         8'h03, 8'h13, 8'h23, 8'h33, // INC ss
                         8'h0B, 8'h1B, 8'h2B, 8'h3B: begin // DEC ss
                             state <= S_M1_T4;
                         end
 
-                        // LD SP, HL
-                        8'hF9: state <= S_M1_T1;
+                        // LD SP, HL / IX / IY
+                        8'hF9: begin
+                            prefix_dd <= 1'b0;
+                            prefix_fd <= 1'b0;
+                            state <= S_M1_T1;
+                        end
 
                         // 8-bit メモリ間接ロード / ストア
                         8'h0A: begin // LD A, (BC)
@@ -912,13 +1063,19 @@ module z80_control (
                             bus_addr <= de_out; bus_dout <= acc_out; bus_mreq_n <= 1'b0; bus_wr_n <= 1'b0;
                             probe_bus_active <= 1'b1; state <= S_MEM_WR_T1;
                         end
-                        8'h34, 8'h35: begin // INC/DEC (HL)
-                            bus_addr <= hl_out; bus_mreq_n <= 1'b0; bus_rd_n <= 1'b0;
-                            probe_bus_active <= 1'b1; state <= S_MEM_RMW_RD;
+                        8'h34, 8'h35: begin // INC/DEC (HL) / INC/DEC (IX+d) / (IY+d)
+                            if (prefix_dd || prefix_fd) begin
+                                bus_addr <= pc_in; bus_mreq_n <= 1'b0; bus_rd_n <= 1'b0;
+                                probe_bus_active <= 1'b1; state <= S_IDX_DISP_FETCH;
+                            end else begin
+                                bus_addr <= hl_out; bus_mreq_n <= 1'b0; bus_rd_n <= 1'b0;
+                                probe_bus_active <= 1'b1; state <= S_MEM_RMW_RD;
+                            end
                         end
-                        8'h36: begin // LD (HL), n
+                        8'h36: begin // LD (HL), n / LD (IX+d), n
                             bus_addr <= pc_in; bus_mreq_n <= 1'b0; bus_rd_n <= 1'b0;
-                            probe_bus_active <= 1'b1; state <= S_M2_T1_RD;
+                            probe_bus_active <= 1'b1;
+                            state <= (prefix_dd || prefix_fd) ? S_IDX_DISP_FETCH : S_M2_T1_RD;
                         end
                         8'h32, 8'h3A, 8'h22, 8'h2A: begin // LD (nn),A / LD A,(nn) / LD (nn),HL / LD HL,(nn)
                             bus_addr <= pc_in; bus_mreq_n <= 1'b0; bus_rd_n <= 1'b0;
@@ -930,7 +1087,11 @@ module z80_control (
                             bus_addr <= pc_in; bus_mreq_n <= 1'b0; bus_rd_n <= 1'b0;
                             probe_bus_active <= 1'b1; state <= S_M2_T1_RD;
                         end
-                        8'hE9: state <= S_M1_T1; // JP (HL)
+                        8'hE9: begin // JP (HL) / JP (IX) / JP (IY)
+                            prefix_dd <= 1'b0;
+                            prefix_fd <= 1'b0;
+                            state <= S_M1_T1;
+                        end
                         8'h18: begin // JR e
                             bus_addr <= pc_in; bus_mreq_n <= 1'b0; bus_rd_n <= 1'b0;
                             probe_bus_active <= 1'b1; state <= S_M2_T1_RD;
@@ -957,6 +1118,7 @@ module z80_control (
                         // スタック PUSH / POP
                         8'hC5, 8'hD5, 8'hE5, 8'hF5: begin // PUSH qq
                             if (opcode == 8'hF5) temp16 <= {acc_out, flags_in_wire};
+                            else if ((prefix_dd || prefix_fd) && opcode == 8'hE5) temp16 <= prefix_dd ? ix_out : iy_out;
                             else temp16 <= get_pair16(opcode[5:4], bc_out, de_out, hl_out, sp_out);
                             state <= S_PUSH_HI;
                         end
@@ -977,6 +1139,8 @@ module z80_control (
                                     bus_addr <= sp_out; bus_mreq_n <= 1'b0; bus_rd_n <= 1'b0;
                                     probe_bus_active <= 1'b1; state <= S_RET_RD_HI;
                                 end else begin
+                                    prefix_dd <= 1'b0;
+                                    prefix_fd <= 1'b0;
                                     state <= S_M1_T1;
                                 end
                             end else if (opcode[7:6] == 2'b11 && opcode[2:0] == 3'b111) begin // RST p
@@ -985,14 +1149,23 @@ module z80_control (
                                 bus_addr <= pc_in; bus_mreq_n <= 1'b0; bus_rd_n <= 1'b0;
                                 probe_bus_active <= 1'b1; state <= S_M2_T1_RD;
                             end else if (opcode[7:6] == 2'b01) begin
-                                if (opcode[2:0] == 3'b110) begin // LD r, (HL)
-                                    reg_dst_sel_buf <= opcode[5:3]; bus_addr <= hl_out;
-                                    bus_mreq_n <= 1'b0; bus_rd_n <= 1'b0; probe_bus_active <= 1'b1;
-                                    state <= S_MEM_RD_T1;
-                                end else if (opcode[5:3] == 3'b110) begin // LD (HL), r
-                                    state <= S_MEM_WR_PREP;
-                                end else begin // LD r, r'
-                                    state <= S_M1_T4;
+                                if (prefix_dd || prefix_fd) begin
+                                    if (opcode[2:0] == 3'b110 || opcode[5:3] == 3'b110) begin // LD r, (IX+d) / LD (IX+d), r
+                                        bus_addr <= pc_in; bus_mreq_n <= 1'b0; bus_rd_n <= 1'b0;
+                                        probe_bus_active <= 1'b1; state <= S_IDX_DISP_FETCH;
+                                    end else begin // LD r, r' (IXH / IXL / IYH / IYL を含む)
+                                        state <= S_M1_T4;
+                                    end
+                                end else begin
+                                    if (opcode[2:0] == 3'b110) begin // LD r, (HL)
+                                        reg_dst_sel_buf <= opcode[5:3]; bus_addr <= hl_out;
+                                        bus_mreq_n <= 1'b0; bus_rd_n <= 1'b0; probe_bus_active <= 1'b1;
+                                        state <= S_MEM_RD_T1;
+                                    end else if (opcode[5:3] == 3'b110) begin // LD (HL), r
+                                        state <= S_MEM_WR_PREP;
+                                    end else begin // LD r, r'
+                                        state <= S_M1_T4;
+                                    end
                                 end
                             end else if (opcode[7:6] == 2'b00 && opcode[2:0] == 3'b110) begin // LD r, n
                                 bus_addr <= pc_in; bus_mreq_n <= 1'b0; bus_rd_n <= 1'b0;
@@ -1000,16 +1173,27 @@ module z80_control (
                             end else if (opcode[7:6] == 2'b00 && (opcode[2:0] == 3'b100 || opcode[2:0] == 3'b101)) begin // INC/DEC r
                                 state <= S_M1_T4;
                             end else if (opcode[7:6] == 2'b10) begin
-                                if (opcode[2:0] == 3'b110) begin // ALU A, (HL)
-                                    bus_addr <= hl_out; bus_mreq_n <= 1'b0; bus_rd_n <= 1'b0;
-                                    probe_bus_active <= 1'b1; state <= S_MEM_ALU_RD;
-                                end else begin // ALU A, r
-                                    state <= S_M1_T4;
+                                if (prefix_dd || prefix_fd) begin
+                                    if (opcode[2:0] == 3'b110) begin // ALU A, (IX+d)
+                                        bus_addr <= pc_in; bus_mreq_n <= 1'b0; bus_rd_n <= 1'b0;
+                                        probe_bus_active <= 1'b1; state <= S_IDX_DISP_FETCH;
+                                    end else begin // ALU A, r (IXH / IXL / IYH / IYL を含む)
+                                        state <= S_M1_T4;
+                                    end
+                                end else begin
+                                    if (opcode[2:0] == 3'b110) begin // ALU A, (HL)
+                                        bus_addr <= hl_out; bus_mreq_n <= 1'b0; bus_rd_n <= 1'b0;
+                                        probe_bus_active <= 1'b1; state <= S_MEM_ALU_RD;
+                                    end else begin // ALU A, r
+                                        state <= S_M1_T4;
+                                    end
                                 end
                             end else if (opcode[7:6] == 2'b11 && opcode[2:0] == 3'b110) begin // ALU A, n
                                 bus_addr <= pc_in; bus_mreq_n <= 1'b0; bus_rd_n <= 1'b0;
                                 probe_bus_active <= 1'b1; state <= S_M2_T1_RD;
                             end else begin
+                                prefix_dd <= 1'b0;
+                                prefix_fd <= 1'b0;
                                 state <= S_M1_T1;
                             end
                         end
@@ -1017,12 +1201,16 @@ module z80_control (
                 end
 
                 S_M1_T4: begin
+                    prefix_dd <= 1'b0;
+                    prefix_fd <= 1'b0;
                     state <= S_M1_T1;
                 end
 
                 S_MEM_RD_T1: begin
                     bus_rd_n <= 1'b1;
                     bus_mreq_n <= 1'b1;
+                    prefix_dd <= 1'b0;
+                    prefix_fd <= 1'b0;
                     state <= S_M1_T1;
                 end
 
@@ -1038,6 +1226,8 @@ module z80_control (
                 S_MEM_WR_T1: begin
                     bus_wr_n <= 1'b1;
                     bus_mreq_n <= 1'b1;
+                    prefix_dd <= 1'b0;
+                    prefix_fd <= 1'b0;
                     state <= S_M1_T1;
                 end
 
@@ -1065,6 +1255,8 @@ module z80_control (
                 end
 
                 S_MEM_ALU_EXEC: begin
+                    prefix_dd <= 1'b0;
+                    prefix_fd <= 1'b0;
                     state <= S_M1_T1;
                 end
 
@@ -1100,11 +1292,15 @@ module z80_control (
                         probe_bus_active <= 1'b1;
                         state <= S_M3_T1_RD;
                     end else begin
+                        prefix_dd <= 1'b0;
+                        prefix_fd <= 1'b0;
                         state <= S_M1_T1;
                     end
                 end
 
                 S_ALU_IMM_EXEC: begin
+                    prefix_dd <= 1'b0;
+                    prefix_fd <= 1'b0;
                     state <= S_M1_T1;
                 end
 
@@ -1125,15 +1321,15 @@ module z80_control (
                         probe_bus_active <= 1'b1;
                         reg_dst_sel_buf <= 3'd7; // A
                         state <= S_MEM_RD_T1;
-                    end else if (opcode == 8'h22) begin // LD (nn), HL
+                    end else if (opcode == 8'h22) begin // LD (nn), HL / LD (nn), IX / LD (nn), IY
                         target_addr <= {bus_din, imm_low};
                         bus_addr <= {bus_din, imm_low};
-                        bus_dout <= hl_out[7:0];
+                        bus_dout <= (prefix_dd ? ix_out[7:0] : prefix_fd ? iy_out[7:0] : hl_out[7:0]);
                         bus_mreq_n <= 1'b0;
                         bus_wr_n <= 1'b0;
                         probe_bus_active <= 1'b1;
                         state <= S_LD_NN_HL_WR_HI;
-                    end else if (opcode == 8'h2A) begin // LD HL, (nn)
+                    end else if (opcode == 8'h2A) begin // LD HL, (nn) / LD IX, (nn) / LD IY, (nn)
                         target_addr <= {bus_din, imm_low};
                         bus_addr <= {bus_din, imm_low};
                         bus_mreq_n <= 1'b0;
@@ -1141,6 +1337,8 @@ module z80_control (
                         probe_bus_active <= 1'b1;
                         state <= S_LD_HL_NN_RD_HI;
                     end else begin
+                        prefix_dd <= 1'b0;
+                        prefix_fd <= 1'b0;
                         state <= S_M1_T1;
                     end
                 end
@@ -1176,6 +1374,8 @@ module z80_control (
                 S_POP_EXEC: begin
                     bus_rd_n <= 1'b1;
                     bus_mreq_n <= 1'b1;
+                    prefix_dd <= 1'b0;
+                    prefix_fd <= 1'b0;
                     state <= S_M1_T1;
                 end
 
@@ -1220,6 +1420,8 @@ module z80_control (
                 S_RET_EXEC: begin
                     bus_rd_n <= 1'b1;
                     bus_mreq_n <= 1'b1;
+                    prefix_dd <= 1'b0;
+                    prefix_fd <= 1'b0;
                     state <= S_M1_T1;
                 end
 
@@ -1241,16 +1443,16 @@ module z80_control (
                     state <= S_MEM_WR_T1;
                 end
 
-                S_LD_NN_HL_WR_HI: begin // LD (nn), HL ハイバイト書込
+                S_LD_NN_HL_WR_HI: begin // LD (nn), HL / LD (nn), IX / LD (nn), IY ハイバイト書込
                     bus_addr <= target_addr + 16'd1;
-                    bus_dout <= hl_out[15:8];
+                    bus_dout <= (prefix_dd ? ix_out[15:8] : prefix_fd ? iy_out[15:8] : hl_out[15:8]);
                     bus_mreq_n <= 1'b0;
                     bus_wr_n <= 1'b0;
                     probe_bus_active <= 1'b1;
                     state <= S_MEM_WR_T1;
                 end
 
-                S_LD_HL_NN_RD_HI: begin // LD HL, (nn) ハイバイト読出
+                S_LD_HL_NN_RD_HI: begin // LD HL, (nn) / LD IX, (nn) / LD IY, (nn) ハイバイト読出
                     mem_data_buf <= bus_din;
                     bus_addr <= target_addr + 16'd1;
                     bus_mreq_n <= 1'b0;
@@ -1259,9 +1461,11 @@ module z80_control (
                     state <= S_LD_HL_NN_EXEC;
                 end
 
-                S_LD_HL_NN_EXEC: begin // LD HL, (nn) 完了
+                S_LD_HL_NN_EXEC: begin // LD HL, (nn) / LD IX, (nn) / LD IY, (nn) 完了
                     bus_rd_n <= 1'b1;
                     bus_mreq_n <= 1'b1;
+                    prefix_dd <= 1'b0;
+                    prefix_fd <= 1'b0;
                     state <= S_M1_T1;
                 end
 
@@ -1274,10 +1478,10 @@ module z80_control (
                     state <= S_EX_SP_HL_WR_LO;
                 end
 
-                S_EX_SP_HL_WR_LO: begin // EX (SP), HL L を SP へ書込
-                    temp16 <= {bus_din, mem_data_buf}; // 新しい HL 値
+                S_EX_SP_HL_WR_LO: begin // EX (SP), HL / IX / IY 下位バイトを SP へ書込
+                    temp16 <= {bus_din, mem_data_buf}; // 新しい値
                     bus_addr <= sp_out;
-                    bus_dout <= hl_out[7:0];
+                    bus_dout <= (prefix_dd ? ix_out[7:0] : prefix_fd ? iy_out[7:0] : hl_out[7:0]);
                     bus_mreq_n <= 1'b0;
                     bus_rd_n <= 1'b1;
                     bus_wr_n <= 1'b0;
@@ -1285,9 +1489,9 @@ module z80_control (
                     state <= S_EX_SP_HL_WR_HI;
                 end
 
-                S_EX_SP_HL_WR_HI: begin // EX (SP), HL H を SP+1 へ書込
+                S_EX_SP_HL_WR_HI: begin // EX (SP), HL / IX / IY 上位バイトを SP+1 へ書込
                     bus_addr <= sp_out + 16'd1;
-                    bus_dout <= hl_out[15:8];
+                    bus_dout <= (prefix_dd ? ix_out[15:8] : prefix_fd ? iy_out[15:8] : hl_out[15:8]);
                     bus_mreq_n <= 1'b0;
                     bus_wr_n <= 1'b0;
                     probe_bus_active <= 1'b1;
@@ -1610,6 +1814,134 @@ module z80_control (
                     probe_bus_active <= 1'b1;
                     prefix_ed <= 1'b0;
                     state <= S_M1_T1;
+                end
+
+                // Phase 6: インデックス命令シーケンシャル実行
+                S_IDX_DISP_FETCH: begin
+                    bus_rd_n <= 1'b1;
+                    bus_mreq_n <= 1'b1;
+                    target_addr <= (prefix_dd ? ix_out : iy_out) + {{8{bus_din[7]}}, bus_din};
+                    if (opcode == 8'h36) begin // LD (IX+d), n
+                        bus_addr <= pc_in + 16'd1;
+                        bus_mreq_n <= 1'b0;
+                        bus_rd_n <= 1'b0;
+                        probe_bus_active <= 1'b1;
+                        state <= S_IDX_IMM_N;
+                    end else if (opcode == 8'h34 || opcode == 8'h35) begin // INC/DEC (IX+d)
+                        bus_addr <= (prefix_dd ? ix_out : iy_out) + {{8{bus_din[7]}}, bus_din};
+                        bus_mreq_n <= 1'b0;
+                        bus_rd_n <= 1'b0;
+                        probe_bus_active <= 1'b1;
+                        state <= S_IDX_RMW_RD;
+                    end else if (opcode[7:6] == 2'b10 && opcode[2:0] == 3'b110) begin // ALU A, (IX+d)
+                        bus_addr <= (prefix_dd ? ix_out : iy_out) + {{8{bus_din[7]}}, bus_din};
+                        bus_mreq_n <= 1'b0;
+                        bus_rd_n <= 1'b0;
+                        probe_bus_active <= 1'b1;
+                        state <= S_IDX_ALU_RD;
+                    end else if (opcode[7:6] == 2'b01 && opcode[2:0] == 3'b110) begin // LD r, (IX+d)
+                        bus_addr <= (prefix_dd ? ix_out : iy_out) + {{8{bus_din[7]}}, bus_din};
+                        bus_mreq_n <= 1'b0;
+                        bus_rd_n <= 1'b0;
+                        probe_bus_active <= 1'b1;
+                        state <= S_IDX_MEM_RD;
+                    end else if (opcode[7:6] == 2'b01 && opcode[5:3] == 3'b110) begin // LD (IX+d), r
+                        bus_addr <= (prefix_dd ? ix_out : iy_out) + {{8{bus_din[7]}}, bus_din};
+                        bus_dout <= reg_src_data;
+                        bus_mreq_n <= 1'b0;
+                        bus_wr_n <= 1'b0;
+                        probe_bus_active <= 1'b1;
+                        state <= S_MEM_WR_T1;
+                    end else begin
+                        prefix_dd <= 1'b0;
+                        prefix_fd <= 1'b0;
+                        state <= S_M1_T1;
+                    end
+                end
+
+                S_IDX_IMM_N: begin // LD (IX+d), n の n 読出完了 -> メモリ書込
+                    bus_rd_n <= 1'b1;
+                    bus_addr <= target_addr;
+                    bus_dout <= bus_din;
+                    bus_mreq_n <= 1'b0;
+                    bus_wr_n <= 1'b0;
+                    probe_bus_active <= 1'b1;
+                    state <= S_MEM_WR_T1;
+                end
+
+                S_IDX_MEM_RD: begin // LD r, (IX+d) 読出完了
+                    bus_rd_n <= 1'b1;
+                    bus_mreq_n <= 1'b1;
+                    prefix_dd <= 1'b0;
+                    prefix_fd <= 1'b0;
+                    state <= S_M1_T1;
+                end
+
+                S_IDX_ALU_RD: begin // ALU A, (IX+d) 読出完了
+                    bus_rd_n <= 1'b1;
+                    bus_mreq_n <= 1'b1;
+                    prefix_dd <= 1'b0;
+                    prefix_fd <= 1'b0;
+                    state <= S_M1_T1;
+                end
+
+                S_IDX_RMW_RD: begin // INC/DEC (IX+d) 読出完了
+                    mem_data_buf <= bus_din;
+                    bus_rd_n <= 1'b1;
+                    bus_mreq_n <= 1'b1;
+                    state <= S_IDX_RMW_WR;
+                end
+
+                S_IDX_RMW_WR: begin // INC/DEC (IX+d) 書込開始
+                    bus_addr <= target_addr;
+                    bus_dout <= alu_out_res;
+                    bus_mreq_n <= 1'b0;
+                    bus_wr_n <= 1'b0;
+                    probe_bus_active <= 1'b1;
+                    state <= S_MEM_WR_T1;
+                end
+
+                S_IDX_CB_DISP: begin // DD CB d op の d 読出完了 -> op フェッチ
+                    bus_rd_n <= 1'b1;
+                    target_addr <= (prefix_dd ? ix_out : iy_out) + {{8{bus_din[7]}}, bus_din};
+                    bus_addr <= pc_in + 16'd1;
+                    bus_mreq_n <= 1'b0;
+                    bus_rd_n <= 1'b0;
+                    probe_bus_active <= 1'b1;
+                    state <= S_IDX_CB_OP;
+                end
+
+                S_IDX_CB_OP: begin // op 読出完了 -> (IX+d) メモリ読出
+                    bus_rd_n <= 1'b1;
+                    cb_opcode <= bus_din;
+                    probe_opcode <= bus_din;
+                    bus_addr <= target_addr;
+                    bus_mreq_n <= 1'b0;
+                    bus_rd_n <= 1'b0;
+                    probe_bus_active <= 1'b1;
+                    state <= S_IDX_CB_MEM;
+                end
+
+                S_IDX_CB_MEM: begin // (IX+d) メモリ読出完了
+                    bus_rd_n <= 1'b1;
+                    bus_mreq_n <= 1'b1;
+                    if ((cb_opcode & 8'hC0) == 8'h40) begin // BIT
+                        prefix_dd <= 1'b0;
+                        prefix_fd <= 1'b0;
+                        state <= S_M1_T1;
+                    end else begin // RES / SET / Shift / Rotate
+                        mem_data_buf <= bus_din;
+                        state <= S_IDX_CB_WR;
+                    end
+                end
+
+                S_IDX_CB_WR: begin // RES / SET / Shift / Rotate メモリ書込開始
+                    bus_addr <= target_addr;
+                    bus_dout <= alu_out_res;
+                    bus_mreq_n <= 1'b0;
+                    bus_wr_n <= 1'b0;
+                    probe_bus_active <= 1'b1;
+                    state <= S_MEM_WR_T1;
                 end
 
                 S_HALT: begin

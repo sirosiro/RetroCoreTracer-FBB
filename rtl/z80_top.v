@@ -49,7 +49,7 @@ module z80_top (
     output wire        probe_bus_active,
     output wire        probe_instr_boundary,
     output wire [2:0]  probe_prefix,
-    output wire [5:0]  probe_state,
+    output wire [6:0]  probe_state,
     output wire [7:0]  probe_i,
     output wire [7:0]  probe_r,
     output wire [1:0]  probe_im,
@@ -120,6 +120,9 @@ module z80_top (
     wire [15:0] bc_wire;
     wire [15:0] de_wire;
     wire [15:0] sp_wire;
+    wire [15:0] ix_wire;
+    wire [15:0] iy_wire;
+    wire [1:0]  index_mode;
 
     assign probe_pc    = pc_wire;
     assign probe_flags = flags_wire;
@@ -128,6 +131,7 @@ module z80_top (
     z80_registers u_regs (
         .clk(clk),
         .rst_n(rst_n),
+        .index_mode(index_mode),
         .reg_src_sel(reg_src_sel),
         .reg_src_data(reg_src_data),
         .reg_wr_en(reg_wr_en),
@@ -154,6 +158,8 @@ module z80_top (
         .bc_out(bc_wire),
         .de_out(de_wire),
         .sp_out(sp_wire),
+        .ix_out(ix_wire),
+        .iy_out(iy_wire),
         .restore_en(restore_en),
         .restore_pc(restore_pc),
         .restore_af(restore_af),
@@ -246,6 +252,9 @@ module z80_top (
         .bc_out(bc_wire),
         .de_out(de_wire),
         .sp_out(sp_wire),
+        .ix_out(ix_wire),
+        .iy_out(iy_wire),
+        .index_mode(index_mode),
         .flags_in_wire(flags_wire),
         .block_trans_en(block_trans_en),
         .block_trans_dec(block_trans_dec),

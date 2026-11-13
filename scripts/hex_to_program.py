@@ -164,6 +164,85 @@ def disassemble_z80(mem, min_addr, max_addr):
                 mnem = "OTDR"; comment = "; Output, decrement and repeat"
             else:
                 mnem = "ED"; dest = f"${ed_op:02X}"
+        elif op == 0xDD or op == 0xFD:
+            reg_name = "IX" if op == 0xDD else "IY"
+            sub_op = mem[pc]; pc += 1; bytes_list.append(f"{sub_op:02X}")
+            if sub_op == 0xCB:
+                d = mem[pc]; pc += 1; bytes_list.append(f"{d:02X}")
+                cb_op = mem[pc]; pc += 1; bytes_list.append(f"{cb_op:02X}")
+                disp = f"+{d}" if d < 128 else f"-{256-d}"
+                target = f"({reg_name}{disp})"
+                bit_idx = (cb_op >> 3) & 0x07
+                grp = (cb_op >> 6) & 0x03
+                if grp == 0:
+                    cb_rot = ["RLC", "RRC", "RL", "RR", "SLA", "SRA", "SLL", "SRL"]
+                    mnem = cb_rot[bit_idx]; dest = target; comment = f"; Shift/Rotate {target}"
+                elif grp == 1:
+                    mnem = "BIT"; dest = f"{bit_idx},"; src = target; comment = f"; Test bit {bit_idx} of {target}"
+                elif grp == 2:
+                    mnem = "RES"; dest = f"{bit_idx},"; src = target; comment = f"; Reset bit {bit_idx} of {target}"
+                else:
+                    mnem = "SET"; dest = f"{bit_idx},"; src = target; comment = f"; Set bit {bit_idx} of {target}"
+            elif sub_op == 0x21:
+                lo = mem[pc]; hi = mem[pc+1]; pc += 2; bytes_list.extend([f"{lo:02X}", f"{hi:02X}"])
+                val = (hi << 8) | lo; mnem = "LD"; dest = f"{reg_name},"; src = f"${val:04X}"; comment = f"; Load 16-bit immediate into {reg_name}"
+            elif sub_op == 0x22:
+                lo = mem[pc]; hi = mem[pc+1]; pc += 2; bytes_list.extend([f"{lo:02X}", f"{hi:02X}"])
+                val = (hi << 8) | lo; mnem = "LD"; dest = f"(${val:04X}),"; src = reg_name; comment = f"; Store {reg_name} to (${val:04X})"
+            elif sub_op == 0x2A:
+                lo = mem[pc]; hi = mem[pc+1]; pc += 2; bytes_list.extend([f"{lo:02X}", f"{hi:02X}"])
+                val = (hi << 8) | lo; mnem = "LD"; dest = f"{reg_name},"; src = f"(${val:04X})"; comment = f"; Load {reg_name} from (${val:04X})"
+            elif sub_op in [0x09, 0x19, 0x29, 0x39]:
+                ss = ["BC", "DE", reg_name, "SP"][(sub_op >> 4) & 3]
+                mnem = "ADD"; dest = f"{reg_name},"; src = ss; comment = f"; 16-bit addition {reg_name} + {ss}"
+            elif sub_op == 0x23:
+                mnem = "INC"; dest = reg_name; comment = f"; Increment {reg_name}"
+            elif sub_op == 0x2B:
+                mnem = "DEC"; dest = reg_name; comment = f"; Decrement {reg_name}"
+            elif sub_op == 0xE5:
+                mnem = "PUSH"; dest = reg_name; comment = f"; Push {reg_name} to stack"
+            elif sub_op == 0xE1:
+                mnem = "POP"; dest = reg_name; comment = f"; Pop {reg_name} from stack"
+            elif sub_op == 0xE3:
+                mnem = "EX"; dest = "(SP),"; src = reg_name; comment = f"; Exchange {reg_name} with top of stack"
+            elif sub_op == 0xE9:
+                mnem = "JP"; dest = f"({reg_name})"; comment = f"; Jump to address in {reg_name}"
+            elif sub_op == 0xF9:
+                mnem = "LD"; dest = "SP,"; src = reg_name; comment = f"; Load SP from {reg_name}"
+            elif sub_op == 0x34 or sub_op == 0x35:
+                d = mem[pc]; pc += 1; bytes_list.append(f"{d:02X}")
+                disp = f"+{d}" if d < 128 else f"-{256-d}"
+                mnem = "INC" if sub_op == 0x34 else "DEC"; dest = f"({reg_name}{disp})"; comment = f"; {mnem} memory byte"
+            elif sub_op == 0x36:
+                d = mem[pc]; n = mem[pc+1]; pc += 2; bytes_list.extend([f"{d:02X}", f"{n:02X}"])
+                disp = f"+{d}" if d < 128 else f"-{256-d}"
+                mnem = "LD"; dest = f"({reg_name}{disp}),"; src = f"${n:02X}"; comment = f"; Store immediate ${n:02X} into ({reg_name}{disp})"
+            elif (sub_op & 0xC0) == 0x40:
+                if (sub_op & 7) == 6:
+                    d = mem[pc]; pc += 1; bytes_list.append(f"{d:02X}")
+                    disp = f"+{d}" if d < 128 else f"-{256-d}"
+                    mnem = "LD"; dest = f"{r8[(sub_op >> 3) & 7]},"; src = f"({reg_name}{disp})"; comment = f"; Load from indexed memory"
+                elif ((sub_op >> 3) & 7) == 6:
+                    d = mem[pc]; pc += 1; bytes_list.append(f"{d:02X}")
+                    disp = f"+{d}" if d < 128 else f"-{256-d}"
+                    mnem = "LD"; dest = f"({reg_name}{disp}),"; src = r8[sub_op & 7]; comment = f"; Store to indexed memory"
+                else:
+                    reg_h = f"{reg_name}H"; reg_l = f"{reg_name}L"
+                    r_map = ['B', 'C', 'D', 'E', reg_h, reg_l, f"({reg_name})", 'A']
+                    mnem = "LD"; dest = f"{r_map[(sub_op >> 3) & 7]},"; src = r_map[sub_op & 7]
+            elif (sub_op & 0xC0) == 0x80:
+                if (sub_op & 7) == 6:
+                    d = mem[pc]; pc += 1; bytes_list.append(f"{d:02X}")
+                    disp = f"+{d}" if d < 128 else f"-{256-d}"
+                    alu_ops = ["ADD A,", "ADC A,", "SUB", "SBC A,", "AND", "XOR", "OR", "CP"]
+                    mnem = alu_ops[(sub_op >> 3) & 7]; dest = f"({reg_name}{disp})"; comment = f"; ALU with indexed memory"
+                else:
+                    reg_h = f"{reg_name}H"; reg_l = f"{reg_name}L"
+                    r_map = ['B', 'C', 'D', 'E', reg_h, reg_l, f"({reg_name})", 'A']
+                    alu_ops = ["ADD A,", "ADC A,", "SUB", "SBC A,", "AND", "XOR", "OR", "CP"]
+                    mnem = alu_ops[(sub_op >> 3) & 7]; dest = r_map[sub_op & 7]
+            else:
+                mnem = f"{'DD' if op == 0xDD else 'FD'}"; dest = f"${sub_op:02X}"
         elif op == 0xDB:
             n = mem[pc]; pc += 1; bytes_list.append(f"{n:02X}")
             mnem = "IN"; dest = "A,"; src = f"(${n:02X})"; comment = f"; Read port 0x{n:02X} into A"

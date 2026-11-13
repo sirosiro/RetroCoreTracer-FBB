@@ -187,6 +187,57 @@ CpuSnapshot Z80Daemon::capture_snapshot() {
             ss << std::hex << std::uppercase << std::setw(2) << std::setfill('0') << (int)op;
             return ss.str();
         })();
+    } else if (s.prefix == 3 || s.prefix == 4) { // Phase 6: DD / FD プレフィックス
+        std::string reg_name = (s.prefix == 3) ? "IX" : "IY";
+        if (op == 0x21) s.executed_mnemonic = "LD " + reg_name + ", nn";
+        else if (op == 0x22) s.executed_mnemonic = "LD (nn), " + reg_name;
+        else if (op == 0x2A) s.executed_mnemonic = "LD " + reg_name + ", (nn)";
+        else if (op == 0x09) s.executed_mnemonic = "ADD " + reg_name + ", BC";
+        else if (op == 0x19) s.executed_mnemonic = "ADD " + reg_name + ", DE";
+        else if (op == 0x29) s.executed_mnemonic = "ADD " + reg_name + ", " + reg_name;
+        else if (op == 0x39) s.executed_mnemonic = "ADD " + reg_name + ", SP";
+        else if (op == 0x23) s.executed_mnemonic = "INC " + reg_name;
+        else if (op == 0x2B) s.executed_mnemonic = "DEC " + reg_name;
+        else if (op == 0xE5) s.executed_mnemonic = "PUSH " + reg_name;
+        else if (op == 0xE1) s.executed_mnemonic = "POP " + reg_name;
+        else if (op == 0xE3) s.executed_mnemonic = "EX (SP), " + reg_name;
+        else if (op == 0xE9) s.executed_mnemonic = "JP (" + reg_name + ")";
+        else if (op == 0xF9) s.executed_mnemonic = "LD SP, " + reg_name;
+        else if (op == 0x26) s.executed_mnemonic = "LD " + std::string(s.prefix == 3 ? "IXH" : "IYH") + ", n";
+        else if (op == 0x2E) s.executed_mnemonic = "LD " + std::string(s.prefix == 3 ? "IXL" : "IYL") + ", n";
+        else if (op == 0x34) s.executed_mnemonic = "INC (" + reg_name + "+d)";
+        else if (op == 0x35) s.executed_mnemonic = "DEC (" + reg_name + "+d)";
+        else if (op == 0x36) s.executed_mnemonic = "LD (" + reg_name + "+d), n";
+        else if ((op & 0xC0) == 0x40) {
+            if ((op & 7) == 6) s.executed_mnemonic = "LD " + std::string(r_names[(op >> 3) & 7]) + ", (" + reg_name + "+d)";
+            else if (((op >> 3) & 7) == 6) s.executed_mnemonic = "LD (" + reg_name + "+d), " + r_names[op & 7];
+            else {
+                std::string rh = (s.prefix == 3 ? "IXH" : "IYH");
+                std::string rl = (s.prefix == 3 ? "IXL" : "IYL");
+                const char* r_idx[] = {"B", "C", "D", "E", rh.c_str(), rl.c_str(), "(HL)", "A"};
+                s.executed_mnemonic = std::string("LD ") + r_idx[(op >> 3) & 7] + ", " + r_idx[op & 7];
+            }
+        } else if ((op & 0xC0) == 0x80) {
+            if ((op & 7) == 6) s.executed_mnemonic = std::string(alu_names[(op >> 3) & 7]) + " (" + reg_name + "+d)";
+            else s.executed_mnemonic = std::string(alu_names[(op >> 3) & 7]) + " " + reg_name;
+        } else {
+            s.executed_mnemonic = ((s.prefix == 3) ? "DD 0x" : "FD 0x") + ([op]() {
+                std::ostringstream ss;
+                ss << std::hex << std::uppercase << std::setw(2) << std::setfill('0') << (int)op;
+                return ss.str();
+            })();
+        }
+    } else if (s.prefix == 5 || s.prefix == 6) { // Phase 6: DD CB / FD CB プレフィックス
+        std::string reg_name = (s.prefix == 5) ? "IX" : "IY";
+        if ((op & 0xC0) == 0x00) {
+            s.executed_mnemonic = std::string(cb_rot_names[(op >> 3) & 7]) + " (" + reg_name + "+d)";
+        } else if ((op & 0xC0) == 0x40) {
+            s.executed_mnemonic = "BIT " + std::to_string((op >> 3) & 7) + ", (" + reg_name + "+d)";
+        } else if ((op & 0xC0) == 0x80) {
+            s.executed_mnemonic = "RES " + std::to_string((op >> 3) & 7) + ", (" + reg_name + "+d)";
+        } else {
+            s.executed_mnemonic = "SET " + std::to_string((op >> 3) & 7) + ", (" + reg_name + "+d)";
+        }
     } else if (op == 0x00) s.executed_mnemonic = "NOP";
     else if (op == 0x76) s.executed_mnemonic = "HALT";
     else if (op == 0xEB) s.executed_mnemonic = "EX DE, HL";
@@ -357,6 +408,22 @@ void Z80Daemon::run_standalone_test(size_t max_steps) {
             std::ostringstream ss;
             ss << "0xed 0x" << std::hex << std::setw(2) << std::setfill('0') << (int)s.opcode;
             op_str = ss.str();
+        } else if (s.prefix == 3) {
+            std::ostringstream ss;
+            ss << "0xdd 0x" << std::hex << std::setw(2) << std::setfill('0') << (int)s.opcode;
+            op_str = ss.str();
+        } else if (s.prefix == 4) {
+            std::ostringstream ss;
+            ss << "0xfd 0x" << std::hex << std::setw(2) << std::setfill('0') << (int)s.opcode;
+            op_str = ss.str();
+        } else if (s.prefix == 5) {
+            std::ostringstream ss;
+            ss << "0xdd 0xcb 0x" << std::hex << std::setw(2) << std::setfill('0') << (int)s.opcode;
+            op_str = ss.str();
+        } else if (s.prefix == 6) {
+            std::ostringstream ss;
+            ss << "0xfd 0xcb 0x" << std::hex << std::setw(2) << std::setfill('0') << (int)s.opcode;
+            op_str = ss.str();
         } else {
             std::ostringstream ss;
             ss << "0x" << std::hex << std::setw(2) << std::setfill('0') << (int)s.opcode;
@@ -367,9 +434,9 @@ void Z80Daemon::run_standalone_test(size_t max_steps) {
                   << " | Op: " << op_str
                   << " (" << s.executed_mnemonic << ")"
                   << " | A: 0x" << std::setw(2) << (s.af >> 8)
-                  << " | B: 0x" << std::setw(2) << (s.bc >> 8)
-                  << " | C: 0x" << std::setw(2) << (s.bc & 0xFF)
                   << " | HL: 0x" << std::setw(4) << s.hl
+                  << " | IX: 0x" << std::setw(4) << s.ix
+                  << " | IY: 0x" << std::setw(4) << s.iy
                   << " | Flags: 0x" << std::setw(2) << (int)s.flags
                   << " | Cycles: " << std::dec << s.cycle_count
                   << std::endl;

@@ -178,6 +178,46 @@ def generate_phase5_hex(output_path):
     ])
     write_intel_hex(output_path, {0x0000: code})
 
+def generate_phase6_hex(output_path):
+    code = bytearray([
+        # 1. 16-bit IX / IY operations
+        0xDD, 0x21, 0x00, 0x20, # 0000: LD IX, $2000
+        0x01, 0x50, 0x00,       # 0004: LD BC, $0050
+        0xDD, 0x09,             # 0007: ADD IX, BC -> IX = $2050
+        0xDD, 0x23,             # 0009: INC IX -> IX = $2051
+        0xDD, 0x2B,             # 000B: DEC IX -> IX = $2050
+        0xDD, 0x22, 0x80, 0x01, # 000D: LD ($0180), IX
+        0xFD, 0x2A, 0x80, 0x01, # 0011: LD IY, ($0180) -> IY = $2050
+
+        # 2. Indexed Memory Access (IX+d) & (IY+d)
+        0xDD, 0x36, 0x04, 0xAA, # 0015: LD (IX+$04), $AA -> ($2054) = $AA
+        0xDD, 0x7E, 0x04,       # 0019: LD A, (IX+$04) -> A = $AA
+        0xDD, 0x34, 0x04,       # 001C: INC (IX+$04) -> ($2054) = $AB
+        0xDD, 0x46, 0x04,       # 001F: LD B, (IX+$04) -> B = $AB
+        0xDD, 0x86, 0x04,       # 0022: ADD A, (IX+$04) -> A = $AA + $AB = $55 (C=1)
+        0xFD, 0x36, 0xFE, 0x33, # 0025: LD (IY-$02), $33 -> ($204E) = $33
+        0xFD, 0x4E, 0xFE,       # 0029: LD C, (IY-$02) -> C = $33
+
+        # 3. 8-bit IXH / IXL register access
+        0xDD, 0x26, 0x5A,       # 002C: LD IXH, $5A -> IX = $5A50
+        0xDD, 0x2E, 0xC3,       # 002F: LD IXL, $C3 -> IX = $5AC3
+        0xDD, 0x7C,             # 0032: LD A, IXH -> A = $5A
+        0xDD, 0x45,             # 0034: LD B, IXL -> B = $C3
+
+        # 4. 4-byte DDCB operations on (IX+d)
+        0xDD, 0xCB, 0x04, 0xFE, # 0036: SET 7, (IX+$04) -> ($2054) bit 7 = 1
+        0xDD, 0xCB, 0x04, 0x7E, # 003A: BIT 7, (IX+$04) -> Z = 0
+        0xDD, 0xCB, 0x04, 0xBE, # 003E: RES 7, (IX+$04) -> ($2054) bit 7 = 0
+        0xDD, 0xCB, 0x04, 0x7E, # 0042: BIT 7, (IX+$04) -> Z = 1
+
+        # 5. Stack PUSH / POP IX / IY
+        0x31, 0x00, 0x10,       # 0046: LD SP, $1000
+        0xDD, 0xE5,             # 0049: PUSH IX -> pushes $5AC3 to stack
+        0xFD, 0xE1,             # 004B: POP IY -> IY = $5AC3
+        0x76                    # 004D: HALT
+    ])
+    write_intel_hex(output_path, {0x0000: code})
+
 if __name__ == "__main__":
     out_dir = sys.argv[1] if len(sys.argv) > 1 else "examples"
     os.makedirs(out_dir, exist_ok=True)
@@ -189,4 +229,6 @@ if __name__ == "__main__":
     generate_phase4_hex(p4_file)
     p5_file = os.path.join(out_dir, "z80_test_05_ed_block_io.hex")
     generate_phase5_hex(p5_file)
+    p6_file = os.path.join(out_dir, "z80_test_06_ix_iy_indexed.hex")
+    generate_phase6_hex(p6_file)
 

@@ -7,6 +7,7 @@ module z80_registers (
     input  wire        rst_n,
 
     // レジスタ読出ポート
+    input  wire [1:0]  index_mode,  // 0: none, 1: IX, 2: IY
     input  wire [2:0]  reg_src_sel, // 0:B, 1:C, 2:D, 3:E, 4:H, 5:L, 6:(HL)/None, 7:A
     output reg  [7:0]  reg_src_data,
 
@@ -47,6 +48,8 @@ module z80_registers (
     output wire [15:0] bc_out,
     output wire [15:0] de_out,
     output wire [15:0] sp_out,
+    output wire [15:0] ix_out,
+    output wire [15:0] iy_out,
 
     // タイムトラベル（Undo 復元用）ポート
     input  wire        restore_en,
@@ -138,6 +141,8 @@ module z80_registers (
     assign bc_out  = {r_b, r_c};
     assign de_out  = {r_d, r_e};
     assign sp_out  = r_sp;
+    assign ix_out  = r_ix;
+    assign iy_out  = r_iy;
 
     // 特殊レジスタ参照
     assign i_out    = r_i;
@@ -169,8 +174,8 @@ module z80_registers (
             3'd1: reg_src_data = r_c;
             3'd2: reg_src_data = r_d;
             3'd3: reg_src_data = r_e;
-            3'd4: reg_src_data = r_h;
-            3'd5: reg_src_data = r_l;
+            3'd4: reg_src_data = (index_mode == 2'd1) ? r_ix[15:8] : (index_mode == 2'd2) ? r_iy[15:8] : r_h;
+            3'd5: reg_src_data = (index_mode == 2'd1) ? r_ix[7:0]  : (index_mode == 2'd2) ? r_iy[7:0]  : r_l;
             3'd6: reg_src_data = 8'h00; // (HL) は外部メモリアクセスで処理
             3'd7: reg_src_data = r_a;
         endcase
@@ -258,8 +263,16 @@ module z80_registers (
                     3'd1: r_c <= reg_wr_data;
                     3'd2: r_d <= reg_wr_data;
                     3'd3: r_e <= reg_wr_data;
-                    3'd4: r_h <= reg_wr_data;
-                    3'd5: r_l <= reg_wr_data;
+                    3'd4: begin
+                        if (index_mode == 2'd1) r_ix[15:8] <= reg_wr_data;
+                        else if (index_mode == 2'd2) r_iy[15:8] <= reg_wr_data;
+                        else r_h <= reg_wr_data;
+                    end
+                    3'd5: begin
+                        if (index_mode == 2'd1) r_ix[7:0] <= reg_wr_data;
+                        else if (index_mode == 2'd2) r_iy[7:0] <= reg_wr_data;
+                        else r_l <= reg_wr_data;
+                    end
                     3'd7: r_a <= reg_wr_data;
                     default: ;
                 endcase
@@ -274,7 +287,11 @@ module z80_registers (
                     case (pair_sel)
                         2'd0: begin r_b <= pair_wr_data[15:8]; r_c <= pair_wr_data[7:0]; end
                         2'd1: begin r_d <= pair_wr_data[15:8]; r_e <= pair_wr_data[7:0]; end
-                        2'd2: begin r_h <= pair_wr_data[15:8]; r_l <= pair_wr_data[7:0]; end
+                        2'd2: begin
+                            if (index_mode == 2'd1) r_ix <= pair_wr_data;
+                            else if (index_mode == 2'd2) r_iy <= pair_wr_data;
+                            else begin r_h <= pair_wr_data[15:8]; r_l <= pair_wr_data[7:0]; end
+                        end
                         2'd3: begin if (!sp_wr_en) r_sp <= pair_wr_data; end
                     endcase
                 end
