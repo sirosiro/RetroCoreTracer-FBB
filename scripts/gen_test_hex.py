@@ -218,6 +218,66 @@ def generate_phase6_hex(output_path):
     ])
     write_intel_hex(output_path, {0x0000: code})
 
+def generate_phase7_hex(output_path):
+    code = bytearray([
+        # --- Part 1: Phase 2 Core 8-bit ALU & DAA ---
+        0x3E, 0x09,             # 0000: LD A, $09
+        0xC6, 0x07,             # 0002: ADD A, $07 -> A = $10, DAA -> A = $16
+        0x27,                   # 0004: DAA
+        0x2F,                   # 0005: CPL (Invert A)
+        0x37,                   # 0006: SCF (Set Carry)
+        0x3F,                   # 0007: CCF (Clear Carry)
+
+        # --- Part 2: Phase 3 Stack, 16-bit & Subroutine ---
+        0x31, 0x00, 0x10,       # 0008: LD SP, $1000
+        0x21, 0x34, 0x12,       # 000B: LD HL, $1234
+        0xE5,                   # 000E: PUSH HL -> ($0FFE)=$34, ($0FFF)=$12
+        0x01, 0x78, 0x56,       # 000F: LD BC, $5678
+        0xC5,                   # 0012: PUSH BC -> ($0FFC)=$78, ($0FFD)=$56
+        0xE3,                   # 0013: EX (SP), HL -> HL = $5678, ($0FFC)=$34, ($0FFD)=$12
+        0xD1,                   # 0014: POP DE -> DE = $1234
+        0xC1,                   # 0015: POP BC -> BC = $1234
+        0xCD, 0x55, 0x00,       # 0016: CALL $0055 (subroutine)
+
+        # --- Part 3: Phase 4 CB Bit & Shift Operations ---
+        0x06, 0xA5,             # 0019: LD B, $A5
+        0xCB, 0x00,             # 001B: RLC B
+        0xCB, 0x78,             # 001D: BIT 7, B
+        0xCB, 0xB8,             # 001F: RES 7, B
+        0xCB, 0xF8,             # 0021: SET 7, B
+
+        # --- Part 4: Phase 5 ED Block Transfer & Search ---
+        0x21, 0x00, 0x02,       # 0023: LD HL, $0200
+        0x36, 0xDE,             # 0026: LD (HL), $DE
+        0x23,                   # 0028: INC HL
+        0x36, 0xAD,             # 0029: LD (HL), $AD
+        0x21, 0x00, 0x02,       # 002B: LD HL, $0200
+        0x11, 0x10, 0x02,       # 002E: LD DE, $0210
+        0x01, 0x02, 0x00,       # 0031: LD BC, $0002
+        0xED, 0xB0,             # 0034: LDIR -> copies $DE, $AD to $0210
+        0x3E, 0x05,             # 0036: LD A, $05
+        0xED, 0x44,             # 0038: NEG -> A = $FB
+
+        # --- Part 5: Phase 6 DD/FD IX/IY & DDCB Operations ---
+        0xDD, 0x21, 0x00, 0x30, # 003A: LD IX, $3000
+        0xDD, 0x36, 0x08, 0x55, # 003E: LD (IX+$08), $55
+        0xDD, 0xCB, 0x08, 0xFE, # 0042: SET 7, (IX+$08) -> ($3008)=$D5
+        0xDD, 0x7E, 0x08,       # 0046: LD A, (IX+$08) -> A = $D5
+        0xFD, 0x21, 0x08, 0x30, # 0049: LD IY, $3008
+        0xFD, 0x7E, 0x00,       # 004D: LD A, (IY+$00) -> A = $D5
+        0xC3, 0x5A, 0x00,       # 0050: JP $005A
+        0x00, 0x00,             # 0053: NOP padding
+
+        # --- Subroutine at $0055 ---
+        0x3C,                   # 0055: INC A
+        0xC9,                   # 0056: RET
+        0x00, 0x00, 0x00,       # 0057: NOP padding
+
+        # --- Exit at $005A ---
+        0x76                    # 005A: HALT
+    ])
+    write_intel_hex(output_path, {0x0000: code})
+
 if __name__ == "__main__":
     out_dir = sys.argv[1] if len(sys.argv) > 1 else "examples"
     os.makedirs(out_dir, exist_ok=True)
@@ -231,4 +291,6 @@ if __name__ == "__main__":
     generate_phase5_hex(p5_file)
     p6_file = os.path.join(out_dir, "z80_test_06_ix_iy_indexed.hex")
     generate_phase6_hex(p6_file)
+    p7_file = os.path.join(out_dir, "z80_test_07_full_isa_showcase.hex")
+    generate_phase7_hex(p7_file)
 

@@ -10,6 +10,10 @@
       "cmd": "fbb test {PLUGIN_DIR}/scenario/"
     },
     {
+      "desc": "Launch Interactive Studio with Full ISA Showcase Demo",
+      "cmd": "fbb lab {PLUGIN_DIR}/scenario/ examples/z80_test_07_full_isa_showcase.hex"
+    },
+    {
       "desc": "Launch Interactive Studio with Loop Test Demo",
       "cmd": "fbb lab {PLUGIN_DIR}/scenario/ examples/z80_loop_test.hex"
     },
