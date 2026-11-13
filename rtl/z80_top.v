@@ -50,6 +50,11 @@ module z80_top (
     output wire        probe_instr_boundary,
     output wire [2:0]  probe_prefix,
     output wire [5:0]  probe_state,
+    output wire [7:0]  probe_i,
+    output wire [7:0]  probe_r,
+    output wire [1:0]  probe_im,
+    output wire        probe_iff1,
+    output wire        probe_iff2,
     output wire        halted
 );
 
@@ -72,6 +77,27 @@ module z80_top (
 
     wire        sp_wr_en;
     wire [15:0] sp_new;
+
+    wire        block_trans_en;
+    wire        block_trans_dec;
+    wire        block_search_en;
+    wire        block_search_dec;
+
+    wire        i_wr_en;
+    wire [7:0]  i_wr_data;
+    wire [7:0]  i_out;
+
+    wire        r_wr_en;
+    wire [7:0]  r_wr_data;
+    wire [7:0]  r_out;
+
+    wire        im_wr_en;
+    wire [1:0]  im_wr_data;
+
+    wire        iff_wr_en;
+    wire        iff1_val;
+    wire        iff2_val;
+    wire        iff2_out;
 
     wire        ex_de_hl;
     wire        ex_af_af_alt;
@@ -151,7 +177,28 @@ module z80_top (
         .probe_hl_alt(probe_hl_alt),
         .probe_ix(probe_ix),
         .probe_iy(probe_iy),
-        .probe_sp(probe_sp)
+        .probe_sp(probe_sp),
+        .block_trans_en(block_trans_en),
+        .block_trans_dec(block_trans_dec),
+        .block_search_en(block_search_en),
+        .block_search_dec(block_search_dec),
+        .i_wr_en(i_wr_en),
+        .i_wr_data(i_wr_data),
+        .i_out(i_out),
+        .r_wr_en(r_wr_en),
+        .r_wr_data(r_wr_data),
+        .r_out(r_out),
+        .im_wr_en(im_wr_en),
+        .im_wr_data(im_wr_data),
+        .iff_wr_en(iff_wr_en),
+        .iff1_val(iff1_val),
+        .iff2_val(iff2_val),
+        .iff2_out(iff2_out),
+        .probe_i(probe_i),
+        .probe_r(probe_r),
+        .probe_im(probe_im),
+        .probe_iff1(probe_iff1),
+        .probe_iff2(probe_iff2)
     );
 
     // 2. 算術論理演算ユニット (ALU)
@@ -200,6 +247,22 @@ module z80_top (
         .de_out(de_wire),
         .sp_out(sp_wire),
         .flags_in_wire(flags_wire),
+        .block_trans_en(block_trans_en),
+        .block_trans_dec(block_trans_dec),
+        .block_search_en(block_search_en),
+        .block_search_dec(block_search_dec),
+        .i_wr_en(i_wr_en),
+        .i_wr_data(i_wr_data),
+        .i_out(i_out),
+        .r_wr_en(r_wr_en),
+        .r_wr_data(r_wr_data),
+        .r_out(r_out),
+        .im_wr_en(im_wr_en),
+        .im_wr_data(im_wr_data),
+        .iff_wr_en(iff_wr_en),
+        .iff1_val(iff1_val),
+        .iff2_val(iff2_val),
+        .iff2_out(iff2_out),
         .ex_de_hl(ex_de_hl),
         .ex_af_af_alt(ex_af_af_alt),
         .exx(exx),

@@ -32,6 +32,7 @@ private:
 
     std::unique_ptr<Vz80_top> top_;
     Memory memory_;
+    std::array<uint8_t, 256> io_ports_{};
     SnapshotHistory history_;
     uint64_t step_count_ = 0;
     uint64_t cycle_count_ = 0;

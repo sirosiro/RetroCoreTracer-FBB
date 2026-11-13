@@ -280,6 +280,48 @@ module z80_alu (
                 out_f = in_f;
             end
 
+            // Phase 5: 16-bit ADC / SBC (31, 32)
+            6'd31: begin // ADC HL, ss
+                sum17 = {1'b0, in_a16} + {1'b0, in_b16} + {16'd0, in_f[0]};
+                out_res16 = sum17[15:0];
+                half_carry16 = ({1'b0, in_a16[11:0]} + {1'b0, in_b16[11:0]} + {12'd0, in_f[0]}) >= 13'h1000;
+                overflow = (in_a16[15] == in_b16[15]) && (out_res16[15] != in_a16[15]);
+                // S, Z, Y, H, X, PV, N=0, C
+                out_f = {out_res16[15], (out_res16 == 16'h0000), in_f[5], half_carry16, in_f[3], overflow, 1'b0, sum17[16]};
+            end
+
+            6'd32: begin // SBC HL, ss
+                sum17 = {1'b0, in_a16} - {1'b0, in_b16} - {16'd0, in_f[0]};
+                out_res16 = sum17[15:0];
+                half_carry16 = {1'b0, in_a16[11:0]} < ({1'b0, in_b16[11:0]} + {12'd0, in_f[0]});
+                overflow = (in_a16[15] != in_b16[15]) && (out_res16[15] != in_a16[15]);
+                // S, Z, Y, H, X, PV, N=1, C
+                out_f = {out_res16[15], (out_res16 == 16'h0000), in_f[5], half_carry16, in_f[3], overflow, 1'b1, sum17[16]};
+            end
+
+            // Phase 5: 特殊フラグ計算 (33..37)
+            6'd33: begin // LDI / LDIR / LDD / LDDR フラグ
+                out_f = {in_f[7:5], 1'b0, in_f[3], (in_b16 != 16'd1), 1'b0, in_f[0]};
+            end
+
+            6'd34: begin // CPI / CPIR / CPD / CPDR フラグ
+                sum9 = {1'b0, in_a} - {1'b0, in_b};
+                half_carry = (in_a[3:0] < in_b[3:0]);
+                out_f = {sum9[7], (sum9[7:0] == 8'h00), in_f[5], half_carry, in_f[3], (in_b16 != 16'd1), 1'b1, in_f[0]};
+            end
+
+            6'd35: begin // IN r, (C) フラグ
+                out_f = {in_a[7], (in_a == 8'h00), in_a[5], 1'b0, in_a[3], parity8(in_a), 1'b0, in_f[0]};
+            end
+
+            6'd36: begin // LD A, I / LD A, R フラグ
+                out_f = {in_a[7], (in_a == 8'h00), in_a[5], 1'b0, in_a[3], in_b[0], 1'b0, in_f[0]};
+            end
+
+            6'd37: begin // RLD / RRD フラグ
+                out_f = {in_a[7], (in_a == 8'h00), in_a[5], 1'b0, in_a[3], parity8(in_a), 1'b0, in_f[0]};
+            end
+
             default: begin
                 res = in_a;
                 out_f = in_f;

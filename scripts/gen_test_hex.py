@@ -123,6 +123,61 @@ def generate_phase4_hex(output_path):
     ])
     write_intel_hex(output_path, {0x0000: code})
 
+def generate_phase5_hex(output_path):
+    """
+    Phase 5: ED プレフィックス全命令 (16bit LD, 16bit ADC/SBC, NEG, I/R/IM, RRD/RLD, I/O, LDIR, CPIR)
+    """
+    code = bytes([
+        # 1. 16-bit LD dd, (nn) / LD (nn), dd
+        0x01, 0x34, 0x12,       # 0000: LD BC, $1234
+        0xED, 0x43, 0x80, 0x01, # 0003: LD ($0180), BC
+        0xED, 0x5B, 0x80, 0x01, # 0007: LD DE, ($0180) -> DE = $1234
+        # 2. 16-bit ADC/SBC HL, ss
+        0x21, 0x00, 0x10,       # 000B: LD HL, $1000
+        0xAF,                   # 000E: XOR A (C=0)
+        0xED, 0x4A,             # 000F: ADC HL, BC -> HL = $2234
+        0xED, 0x52,             # 0011: SBC HL, DE -> HL = $1000
+        # 3. NEG & Special Regs
+        0x3E, 0x05,             # 0013: LD A, $05
+        0xED, 0x44,             # 0015: NEG -> A = $FB (-5)
+        0x3E, 0x42,             # 0017: LD A, $42
+        0xED, 0x47,             # 0019: LD I, A -> I = $42
+        0x3E, 0x00,             # 001B: LD A, $00
+        0xED, 0x57,             # 001D: LD A, I -> A = $42
+        0xED, 0x56,             # 001F: IM 1
+        # 4. RRD / RLD
+        0x21, 0x00, 0x02,       # 0021: LD HL, $0200
+        0x36, 0x34,             # 0024: LD (HL), $34
+        0x3E, 0x12,             # 0026: LD A, $12
+        0xED, 0x67,             # 0028: RRD -> A = $14, (HL) = $23
+        # 5. I/O Instructions
+        0x3E, 0x77,             # 002A: LD A, $77
+        0xD3, 0x10,             # 002C: OUT ($10), A
+        0x3E, 0x00,             # 002E: LD A, $00
+        0xDB, 0x10,             # 0030: IN A, ($10) -> A = $77
+        0x06, 0x88,             # 0032: LD B, $88
+        0x0E, 0x20,             # 0034: LD C, $20
+        0xED, 0x41,             # 0036: OUT (C), B
+        0x06, 0x00,             # 0038: LD B, $00
+        0xED, 0x40,             # 003A: IN B, (C) -> B = $88
+        # 6. Block Copy LDIR
+        0x21, 0x00, 0x03,       # 003C: LD HL, $0300
+        0x36, 0xAA,             # 003F: LD (HL), $AA
+        0x23,                   # 0041: INC HL
+        0x36, 0xBB,             # 0042: LD (HL), $BB
+        0x21, 0x00, 0x03,       # 0044: LD HL, $0300
+        0x11, 0x10, 0x03,       # 0047: LD DE, $0310
+        0x01, 0x02, 0x00,       # 004A: LD BC, $0002
+        0xED, 0xB0,             # 004D: LDIR -> copies $AA, $BB to $0310
+        # 7. Block Search CPIR
+        0x21, 0x10, 0x03,       # 004F: LD HL, $0310
+        0x01, 0x02, 0x00,       # 0052: LD BC, $0002
+        0x3E, 0xBB,             # 0055: LD A, $BB
+        0xED, 0xB1,             # 0057: CPIR -> finds $BB, stops with Z=1
+        0x76                    # 0059: HALT
+    ])
+    write_intel_hex(output_path, {0x0000: code})
+
 if __name__ == "__main__":
     out_dir = sys.argv[1] if len(sys.argv) > 1 else "examples"
     os.makedirs(out_dir, exist_ok=True)
@@ -132,4 +187,6 @@ if __name__ == "__main__":
     generate_phase3_hex(p3_file)
     p4_file = os.path.join(out_dir, "z80_test_04_cb_bit_shift.hex")
     generate_phase4_hex(p4_file)
+    p5_file = os.path.join(out_dir, "z80_test_05_ed_block_io.hex")
+    generate_phase5_hex(p5_file)
 

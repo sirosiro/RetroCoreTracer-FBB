@@ -44,6 +44,14 @@ void Z80Daemon::clock_tick() {
             pending_mem_undo_.emplace_back(addr, memory_.read(addr));
             memory_.write(addr, top_->dout);
         }
+    } else if (top_->iorq_n == 0) {
+        uint8_t port = top_->addr & 0xFF;
+        if (top_->rd_n == 0) {
+            top_->din = io_ports_[port];
+            top_->eval();
+        } else if (top_->wr_n == 0) {
+            io_ports_[port] = top_->dout;
+        }
     }
 
     // 3. クロック立ち下がり
@@ -53,6 +61,9 @@ void Z80Daemon::clock_tick() {
     // 立ち下がり後もバス読み出し値を安定維持
     if (top_->mreq_n == 0 && top_->rd_n == 0) {
         top_->din = memory_.read(top_->addr);
+        top_->eval();
+    } else if (top_->iorq_n == 0 && top_->rd_n == 0) {
+        top_->din = io_ports_[top_->addr & 0xFF];
         top_->eval();
     }
 
@@ -135,6 +146,47 @@ CpuSnapshot Z80Daemon::capture_snapshot() {
         } else {
             s.executed_mnemonic = "SET " + std::to_string((op >> 3) & 7) + ", " + r_names[op & 7];
         }
+    } else if (s.prefix == 2) { // Phase 5: ED プレフィックス
+        if (op == 0xB0) s.executed_mnemonic = "LDIR";
+        else if (op == 0xB8) s.executed_mnemonic = "LDDR";
+        else if (op == 0xA0) s.executed_mnemonic = "LDI";
+        else if (op == 0xA8) s.executed_mnemonic = "LDD";
+        else if (op == 0xB1) s.executed_mnemonic = "CPIR";
+        else if (op == 0xB9) s.executed_mnemonic = "CPDR";
+        else if (op == 0xA1) s.executed_mnemonic = "CPI";
+        else if (op == 0xA9) s.executed_mnemonic = "CPD";
+        else if (op == 0xB2) s.executed_mnemonic = "INIR";
+        else if (op == 0xBA) s.executed_mnemonic = "INDR";
+        else if (op == 0xA2) s.executed_mnemonic = "INI";
+        else if (op == 0xAA) s.executed_mnemonic = "IND";
+        else if (op == 0xB3) s.executed_mnemonic = "OTIR";
+        else if (op == 0xBB) s.executed_mnemonic = "OTDR";
+        else if (op == 0xA3) s.executed_mnemonic = "OUTI";
+        else if (op == 0xAB) s.executed_mnemonic = "OUTD";
+        else if (op == 0x44 || op == 0x4C || op == 0x54 || op == 0x5C ||
+                 op == 0x64 || op == 0x6C || op == 0x74 || op == 0x7C) s.executed_mnemonic = "NEG";
+        else if (op == 0x46) s.executed_mnemonic = "IM 0";
+        else if (op == 0x56) s.executed_mnemonic = "IM 1";
+        else if (op == 0x5E) s.executed_mnemonic = "IM 2";
+        else if (op == 0x47) s.executed_mnemonic = "LD I, A";
+        else if (op == 0x4F) s.executed_mnemonic = "LD R, A";
+        else if (op == 0x57) s.executed_mnemonic = "LD A, I";
+        else if (op == 0x5F) s.executed_mnemonic = "LD A, R";
+        else if (op == 0x67) s.executed_mnemonic = "RRD";
+        else if (op == 0x6F) s.executed_mnemonic = "RLD";
+        else if (op == 0x4D) s.executed_mnemonic = "RETI";
+        else if (op == 0x45) s.executed_mnemonic = "RETN";
+        else if ((op & 0xCF) == 0x42) s.executed_mnemonic = std::string("SBC HL, ") + r16_names[(op >> 4) & 3];
+        else if ((op & 0xCF) == 0x4A) s.executed_mnemonic = std::string("ADC HL, ") + r16_names[(op >> 4) & 3];
+        else if ((op & 0xCF) == 0x43) s.executed_mnemonic = std::string("LD (nn), ") + r16_names[(op >> 4) & 3];
+        else if ((op & 0xCF) == 0x4B) s.executed_mnemonic = std::string("LD ") + r16_names[(op >> 4) & 3] + ", (nn)";
+        else if ((op & 0xC7) == 0x40) s.executed_mnemonic = std::string("IN ") + r_names[(op >> 3) & 7] + ", (C)";
+        else if ((op & 0xC7) == 0x41) s.executed_mnemonic = std::string("OUT (C), ") + r_names[(op >> 3) & 7];
+        else s.executed_mnemonic = "ED 0x" + ([op]() {
+            std::ostringstream ss;
+            ss << std::hex << std::uppercase << std::setw(2) << std::setfill('0') << (int)op;
+            return ss.str();
+        })();
     } else if (op == 0x00) s.executed_mnemonic = "NOP";
     else if (op == 0x76) s.executed_mnemonic = "HALT";
     else if (op == 0xEB) s.executed_mnemonic = "EX DE, HL";
@@ -205,6 +257,14 @@ CpuSnapshot Z80Daemon::capture_snapshot() {
         s.executed_mnemonic = std::string(alu_names[(op >> 3) & 7]) + " " + r_names[op & 7];
     } else if ((op & 0xC7) == 0xC6) {
         s.executed_mnemonic = std::string(alu_names[(op >> 3) & 7]) + " n";
+    } else if (op == 0xDB) {
+        s.executed_mnemonic = "IN A, (n)";
+    } else if (op == 0xD3) {
+        s.executed_mnemonic = "OUT (n), A";
+    } else if (op == 0xF3) {
+        s.executed_mnemonic = "DI";
+    } else if (op == 0xFB) {
+        s.executed_mnemonic = "EI";
     } else {
         s.executed_mnemonic = "OP 0x" + ([op]() {
             std::ostringstream ss;
@@ -292,6 +352,10 @@ void Z80Daemon::run_standalone_test(size_t max_steps) {
         if (s.prefix == 1) {
             std::ostringstream ss;
             ss << "0xcb 0x" << std::hex << std::setw(2) << std::setfill('0') << (int)s.opcode;
+            op_str = ss.str();
+        } else if (s.prefix == 2) {
+            std::ostringstream ss;
+            ss << "0xed 0x" << std::hex << std::setw(2) << std::setfill('0') << (int)s.opcode;
             op_str = ss.str();
         } else {
             std::ostringstream ss;

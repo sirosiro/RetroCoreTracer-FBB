@@ -80,6 +80,100 @@ def disassemble_z80(mem, min_addr, max_addr):
                 dest = f"{bit_idx},"
                 src = r_target
                 comment = f"; Set bit {bit_idx} of {r_target}"
+        elif op == 0xED:
+            ed_op = mem[pc]; pc += 1; bytes_list.append(f"{ed_op:02X}")
+            if ed_op == 0xB0:
+                mnem = "LDIR"; comment = "; Load, increment and repeat: (DE) <- (HL), BC <- BC-1"
+            elif ed_op == 0xB8:
+                mnem = "LDDR"; comment = "; Load, decrement and repeat"
+            elif ed_op == 0xA0:
+                mnem = "LDI"; comment = "; Load and increment"
+            elif ed_op == 0xA8:
+                mnem = "LDD"; comment = "; Load and decrement"
+            elif ed_op == 0xB1:
+                mnem = "CPIR"; comment = "; Compare, increment and repeat: CP (HL), BC <- BC-1"
+            elif ed_op == 0xB9:
+                mnem = "CPDR"; comment = "; Compare, decrement and repeat"
+            elif ed_op == 0xA1:
+                mnem = "CPI"; comment = "; Compare and increment"
+            elif ed_op == 0xA9:
+                mnem = "CPD"; comment = "; Compare and decrement"
+            elif ed_op in (0x44, 0x4C, 0x54, 0x5C, 0x64, 0x6C, 0x74, 0x7C):
+                mnem = "NEG"; comment = "; Negate accumulator (twos complement)"
+            elif ed_op == 0x46:
+                mnem = "IM"; dest = "0"; comment = "; Interrupt mode 0"
+            elif ed_op == 0x56:
+                mnem = "IM"; dest = "1"; comment = "; Interrupt mode 1"
+            elif ed_op == 0x5E:
+                mnem = "IM"; dest = "2"; comment = "; Interrupt mode 2"
+            elif ed_op == 0x47:
+                mnem = "LD"; dest = "I,"; src = "A"; comment = "; Load I with A"
+            elif ed_op == 0x4F:
+                mnem = "LD"; dest = "R,"; src = "A"; comment = "; Load R with A"
+            elif ed_op == 0x57:
+                mnem = "LD"; dest = "A,"; src = "I"; comment = "; Load A with I"
+            elif ed_op == 0x5F:
+                mnem = "LD"; dest = "A,"; src = "R"; comment = "; Load A with R"
+            elif ed_op == 0x67:
+                mnem = "RRD"; comment = "; Rotate right decimal"
+            elif ed_op == 0x6F:
+                mnem = "RLD"; comment = "; Rotate left decimal"
+            elif ed_op == 0x4D:
+                mnem = "RETI"; comment = "; Return from interrupt"
+            elif ed_op == 0x45:
+                mnem = "RETN"; comment = "; Return from non-maskable interrupt"
+            elif (ed_op & 0xCF) == 0x42:
+                ss = r16[(ed_op >> 4) & 3]
+                mnem = "SBC"; dest = "HL,"; src = ss; comment = f"; HL = HL - {ss} - C"
+            elif (ed_op & 0xCF) == 0x4A:
+                ss = r16[(ed_op >> 4) & 3]
+                mnem = "ADC"; dest = "HL,"; src = ss; comment = f"; HL = HL + {ss} + C"
+            elif (ed_op & 0xCF) == 0x43:
+                dd = r16[(ed_op >> 4) & 3]
+                lo = mem[pc]; pc += 1; bytes_list.append(f"{lo:02X}")
+                hi = mem[pc]; pc += 1; bytes_list.append(f"{hi:02X}")
+                nn = (hi << 8) | lo
+                mnem = "LD"; dest = f"(${nn:04X}),"; src = dd; comment = f"; Load ({nn:04X}) with {dd}"
+            elif (ed_op & 0xCF) == 0x4B:
+                dd = r16[(ed_op >> 4) & 3]
+                lo = mem[pc]; pc += 1; bytes_list.append(f"{lo:02X}")
+                hi = mem[pc]; pc += 1; bytes_list.append(f"{hi:02X}")
+                nn = (hi << 8) | lo
+                mnem = "LD"; dest = f"{dd},"; src = f"(${nn:04X})"; comment = f"; Load {dd} from ({nn:04X})"
+            elif (ed_op & 0xC7) == 0x40:
+                r = r8[(ed_op >> 3) & 7]
+                mnem = "IN"; dest = f"{r},"; src = "(C)"; comment = f"; Read port C into {r}"
+            elif (ed_op & 0xC7) == 0x41:
+                r = r8[(ed_op >> 3) & 7]
+                mnem = "OUT"; dest = "(C),"; src = r; comment = f"; Write {r} to port C"
+            elif ed_op == 0xA2:
+                mnem = "INI"; comment = "; Input and increment"
+            elif ed_op == 0xB2:
+                mnem = "INIR"; comment = "; Input, increment and repeat"
+            elif ed_op == 0xAA:
+                mnem = "IND"; comment = "; Input and decrement"
+            elif ed_op == 0xBA:
+                mnem = "INDR"; comment = "; Input, decrement and repeat"
+            elif ed_op == 0xA3:
+                mnem = "OUTI"; comment = "; Output and increment"
+            elif ed_op == 0xB3:
+                mnem = "OTIR"; comment = "; Output, increment and repeat"
+            elif ed_op == 0xAB:
+                mnem = "OUTD"; comment = "; Output and decrement"
+            elif ed_op == 0xBB:
+                mnem = "OTDR"; comment = "; Output, decrement and repeat"
+            else:
+                mnem = "ED"; dest = f"${ed_op:02X}"
+        elif op == 0xDB:
+            n = mem[pc]; pc += 1; bytes_list.append(f"{n:02X}")
+            mnem = "IN"; dest = "A,"; src = f"(${n:02X})"; comment = f"; Read port 0x{n:02X} into A"
+        elif op == 0xD3:
+            n = mem[pc]; pc += 1; bytes_list.append(f"{n:02X}")
+            mnem = "OUT"; dest = f"(${n:02X}),"; src = "A"; comment = f"; Write A to port 0x{n:02X}"
+        elif op == 0xF3:
+            mnem = "DI"; comment = "; Disable interrupts"
+        elif op == 0xFB:
+            mnem = "EI"; comment = "; Enable interrupts"
         elif op == 0x76:
             mnem = "HALT"
             comment = "; Halt CPU"

@@ -64,6 +64,29 @@ module z80_control (
     output reg  [15:0] alu_in_b16,
     input  wire [15:0] alu_out_res16,
 
+    // Phase 5 ブロック転送・検索制御
+    output reg         block_trans_en,
+    output reg         block_trans_dec,
+    output reg         block_search_en,
+    output reg         block_search_dec,
+
+    // 特殊レジスタ制御 (I, R, IFF, IM)
+    output reg         i_wr_en,
+    output reg  [7:0]  i_wr_data,
+    input  wire [7:0]  i_out,
+
+    output reg         r_wr_en,
+    output reg  [7:0]  r_wr_data,
+    input  wire [7:0]  r_out,
+
+    output reg         im_wr_en,
+    output reg  [1:0]  im_wr_data,
+
+    output reg         iff_wr_en,
+    output reg         iff1_val,
+    output reg         iff2_val,
+    input  wire        iff2_out,
+
     // タイムトラベル（Undo 復元）
     input  wire        restore_en,
     input  wire        restore_halted,
@@ -124,6 +147,26 @@ module z80_control (
     localparam S_CB_MEM_WR_T1    = 6'd39;
     localparam S_CB_MEM_WR_T2    = 6'd40;
 
+    // Phase 5 追加ステート (ED プレフィックス全拡張命令 & I/O)
+    localparam S_ED_FETCH_T2     = 6'd41;
+    localparam S_ED_EXEC         = 6'd42;
+    localparam S_ED_NN_RD_LO     = 6'd43;
+    localparam S_ED_NN_RD_HI     = 6'd44;
+    localparam S_ED_NN_WR_HI     = 6'd45;
+    localparam S_ED_NN_EXEC      = 6'd46;
+    localparam S_ED_LDIR_RD      = 6'd47;
+    localparam S_ED_LDIR_WR      = 6'd48;
+    localparam S_ED_LDIR_EXEC    = 6'd49;
+    localparam S_ED_CPIR_RD      = 6'd50;
+    localparam S_ED_CPIR_EXEC    = 6'd51;
+    localparam S_ED_RRD_RD       = 6'd52;
+    localparam S_ED_RRD_WR       = 6'd53;
+    localparam S_ED_RRD_EXEC     = 6'd54;
+    localparam S_IO_RD_T1        = 6'd55;
+    localparam S_IO_RD_T2        = 6'd56;
+    localparam S_IO_WR_T1        = 6'd57;
+    localparam S_IO_WR_T2        = 6'd58;
+
     reg [5:0]  state;
     reg [7:0]  opcode;
     reg [7:0]  imm_low;
@@ -136,8 +179,10 @@ module z80_control (
     assign probe_prefix = probe_prefix_latch;
     reg        prefix_cb;
     reg [7:0]  cb_opcode;
+    reg        prefix_ed;
+    reg [7:0]  ed_opcode;
 
-    assign probe_instr_boundary = (state == S_M1_T1 && !prefix_cb);
+    assign probe_instr_boundary = (state == S_M1_T1 && !prefix_cb && !prefix_ed);
     assign probe_state          = state;
 
     /* verilator lint_off UNUSED */
@@ -196,6 +241,21 @@ module z80_control (
         ex_af_af_alt = 1'b0;
         exx          = 1'b0;
 
+        // Phase 5 デフォルト
+        block_trans_en   = 1'b0;
+        block_trans_dec  = 1'b0;
+        block_search_en  = 1'b0;
+        block_search_dec = 1'b0;
+        i_wr_en          = 1'b0;
+        i_wr_data        = 8'h00;
+        r_wr_en          = 1'b0;
+        r_wr_data        = 8'h00;
+        im_wr_en         = 1'b0;
+        im_wr_data       = 2'b00;
+        iff_wr_en        = 1'b0;
+        iff1_val         = 1'b0;
+        iff2_val         = 1'b0;
+
         // ソースレジスタセレクタ
         if (opcode[7:6] == 2'b01 || opcode[7:6] == 2'b10) begin
             reg_src_sel = opcode[2:0];
@@ -227,6 +287,16 @@ module z80_control (
                     8'hE9: begin                // JP (HL)
                         pc_load = 1'b1;
                         pc_new = hl_out;
+                    end
+                    8'hF3: begin                // DI
+                        iff_wr_en = 1'b1;
+                        iff1_val = 1'b0;
+                        iff2_val = 1'b0;
+                    end
+                    8'hFB: begin                // EI
+                        iff_wr_en = 1'b1;
+                        iff1_val = 1'b1;
+                        iff2_val = 1'b1;
                     end
                     default: ;
                 endcase
@@ -473,9 +543,9 @@ module z80_control (
                 pc_new = {10'd0, opcode[5:3], 3'b000};
             end
 
-            S_LD_HL_NN_EXEC: begin // LD HL, (nn) コミット
+            S_LD_HL_NN_EXEC: begin // LD HL, (nn) or LD dd, (nn) コミット
                 pair_wr_en = 1'b1;
-                pair_sel = 2'd2; // HL
+                pair_sel = prefix_ed ? ed_opcode[5:4] : 2'd2; // dd or HL
                 pair_wr_data = {bus_din, mem_data_buf};
             end
 
@@ -539,6 +609,150 @@ module z80_control (
                 end
             end
 
+            // Phase 5: ED プレフィックス組合せ制御
+            S_ED_FETCH_T2: begin
+                pc_inc = 1'b1; // ED 命令第2バイトフェッチ時に PC++
+            end
+
+            S_ED_NN_RD_LO: begin
+                pc_inc = 1'b1; // 16-bit アドレス下位バイトフェッチ時に PC++
+            end
+
+            S_ED_NN_RD_HI: begin
+                pc_inc = 1'b1; // 16-bit アドレス上位バイトフェッチ時に PC++
+            end
+
+            S_IO_RD_T1: begin
+                pc_inc = 1'b1; // IN A, (n) ポート番号フェッチ時に PC++
+            end
+
+            S_IO_WR_T1: begin
+                pc_inc = 1'b1; // OUT (n), A ポート番号フェッチ時に PC++
+            end
+
+            S_ED_EXEC: begin
+                case (ed_opcode)
+                    // NEG (ED 44 / 4C / 54 / 5C / 64 / 6C / 74 / 7C)
+                    8'h44, 8'h4C, 8'h54, 8'h5C, 8'h64, 8'h6C, 8'h74, 8'h7C: begin
+                        alu_op = 6'd12; // NEG
+                        alu_in_a = acc_out;
+                        reg_wr_en = 1'b1;
+                        reg_dst_sel = 3'd7; // A
+                        reg_wr_data = alu_out_res;
+                        flags_wr_en = 1'b1;
+                    end
+
+                    // IM 0/1/2 (ED 46, 56, 5E)
+                    8'h46: begin im_wr_en = 1'b1; im_wr_data = 2'b00; end
+                    8'h56: begin im_wr_en = 1'b1; im_wr_data = 2'b01; end
+                    8'h5E: begin im_wr_en = 1'b1; im_wr_data = 2'b10; end
+
+                    // 特殊レジスタ転送
+                    8'h47: begin i_wr_en = 1'b1; i_wr_data = acc_out; end // LD I, A
+                    8'h4F: begin r_wr_en = 1'b1; r_wr_data = acc_out; end // LD R, A
+                    8'h57: begin // LD A, I
+                        reg_wr_en = 1'b1; reg_dst_sel = 3'd7; reg_wr_data = i_out;
+                        alu_op = 6'd36; // LDA_I_FLAGS
+                        alu_in_a = i_out;
+                        alu_in_b = {7'd0, iff2_out};
+                        flags_wr_en = 1'b1;
+                    end
+                    8'h5F: begin // LD A, R
+                        reg_wr_en = 1'b1; reg_dst_sel = 3'd7; reg_wr_data = r_out;
+                        alu_op = 6'd36; // LDA_I_FLAGS
+                        alu_in_a = r_out;
+                        alu_in_b = {7'd0, iff2_out};
+                        flags_wr_en = 1'b1;
+                    end
+
+                    // 16-bit 算術演算 (ADC HL, ss / SBC HL, ss)
+                    8'h4A, 8'h5A, 8'h6A, 8'h7A: begin // ADC HL, ss
+                        alu_in_a16 = hl_out;
+                        alu_in_b16 = get_pair16(ed_opcode[5:4], bc_out, de_out, hl_out, sp_out);
+                        alu_op = 6'd31; // ADC16
+                        pair_wr_en = 1'b1;
+                        pair_sel = 2'd2; // HL
+                        pair_wr_data = alu_out_res16;
+                        flags_wr_en = 1'b1;
+                    end
+                    8'h42, 8'h52, 8'h62, 8'h72: begin // SBC HL, ss
+                        alu_in_a16 = hl_out;
+                        alu_in_b16 = get_pair16(ed_opcode[5:4], bc_out, de_out, hl_out, sp_out);
+                        alu_op = 6'd32; // SBC16
+                        pair_wr_en = 1'b1;
+                        pair_sel = 2'd2; // HL
+                        pair_wr_data = alu_out_res16;
+                        flags_wr_en = 1'b1;
+                    end
+
+                    // RETI / RETN (ED 4D / 45)
+                    8'h4D, 8'h45: begin
+                        iff_wr_en = 1'b1;
+                        iff1_val = iff2_out;
+                        iff2_val = iff2_out;
+                    end
+
+                    default: ;
+                endcase
+            end
+
+            S_ED_LDIR_EXEC: begin
+                block_trans_en = 1'b1;
+                block_trans_dec = (ed_opcode == 8'hA8 || ed_opcode == 8'hB8);
+                alu_op = 6'd33; // LDIR_FLAGS
+                alu_in_b16 = bc_out;
+                flags_wr_en = 1'b1;
+                if ((ed_opcode == 8'hB0 || ed_opcode == 8'hB8) && (bc_out != 16'd1)) begin
+                    pc_load = 1'b1;
+                    pc_new = pc_in - 16'd2;
+                end
+            end
+
+            S_ED_CPIR_EXEC: begin
+                block_search_en = 1'b1;
+                block_search_dec = (ed_opcode == 8'hA9 || ed_opcode == 8'hB9);
+                alu_op = 6'd34; // CPIR_FLAGS
+                alu_in_a = acc_out;
+                alu_in_b = mem_data_buf;
+                alu_in_b16 = bc_out;
+                flags_wr_en = 1'b1;
+                if ((ed_opcode == 8'hB1 || ed_opcode == 8'hB9) && (bc_out != 16'd1) && (acc_out != mem_data_buf)) begin
+                    pc_load = 1'b1;
+                    pc_new = pc_in - 16'd2;
+                end
+            end
+
+            S_ED_RRD_EXEC: begin
+                reg_wr_en = 1'b1;
+                reg_dst_sel = 3'd7; // A
+                if (ed_opcode == 8'h6F) begin // RLD
+                    reg_wr_data = {acc_out[7:4], mem_data_buf[7:4]};
+                    alu_in_a = {acc_out[7:4], mem_data_buf[7:4]};
+                end else begin // RRD
+                    reg_wr_data = {acc_out[7:4], mem_data_buf[3:0]};
+                    alu_in_a = {acc_out[7:4], mem_data_buf[3:0]};
+                end
+                alu_op = 6'd37; // RRD_FLAGS
+                flags_wr_en = 1'b1;
+            end
+
+            S_ED_NN_EXEC: begin // LD dd, (nn) コミット
+                pair_wr_en = 1'b1;
+                pair_sel = ed_opcode[5:4];
+                pair_wr_data = {bus_din, mem_data_buf};
+            end
+
+            S_IO_RD_T2: begin // IN 命令コミット
+                reg_wr_en = (opcode == 8'hDB) ? 1'b1 : (ed_opcode[5:3] != 3'd6);
+                reg_dst_sel = (opcode == 8'hDB) ? 3'd7 : ed_opcode[5:3];
+                reg_wr_data = bus_din;
+                if (opcode != 8'hDB) begin // IN r, (C) sets flags
+                    alu_op = 6'd35; // IN_FLAGS
+                    alu_in_a = bus_din;
+                    flags_wr_en = 1'b1;
+                end
+            end
+
             default: ;
         endcase
     end
@@ -565,6 +779,8 @@ module z80_control (
             prefix_cb <= 1'b0;
             probe_prefix_latch <= 3'd0;
             cb_opcode <= 8'h00;
+            prefix_ed <= 1'b0;
+            ed_opcode <= 8'h00;
             probe_opcode <= 8'h00;
             probe_bus_active <= 1'b0;
             halted <= 1'b0;
@@ -579,6 +795,8 @@ module z80_control (
             prefix_cb <= 1'b0;
             probe_prefix_latch <= 3'd0;
             cb_opcode <= 8'h00;
+            prefix_ed <= 1'b0;
+            ed_opcode <= 8'h00;
             halted <= restore_halted;
         end else begin
             probe_bus_active <= 1'b0;
@@ -619,6 +837,37 @@ module z80_control (
                             probe_bus_active <= 1'b1;
                             state <= S_CB_FETCH_T2;
                         end
+
+                        // Phase 5: ED プレフィックス
+                        8'hED: begin
+                            prefix_ed <= 1'b1;
+                            probe_prefix_latch <= 3'd2;
+                            bus_addr <= pc_in;
+                            bus_mreq_n <= 1'b0;
+                            bus_rd_n <= 1'b0;
+                            bus_m1_n <= 1'b0;
+                            probe_bus_active <= 1'b1;
+                            state <= S_ED_FETCH_T2;
+                        end
+
+                        // Phase 5: I/O 命令 (IN A, (n) / OUT (n), A)
+                        8'hDB: begin // IN A, (n)
+                            bus_addr <= pc_in;
+                            bus_mreq_n <= 1'b0;
+                            bus_rd_n <= 1'b0;
+                            probe_bus_active <= 1'b1;
+                            state <= S_IO_RD_T1;
+                        end
+                        8'hD3: begin // OUT (n), A
+                            bus_addr <= pc_in;
+                            bus_mreq_n <= 1'b0;
+                            bus_rd_n <= 1'b0;
+                            probe_bus_active <= 1'b1;
+                            state <= S_IO_WR_T1;
+                        end
+
+                        // DI / EI
+                        8'hF3, 8'hFB: state <= S_M1_T1;
 
                         // 交換命令
                         8'hEB, 8'h08, 8'hD9: state <= S_M1_T1; // EX DE, HL / EX AF, AF' / EXX
@@ -1114,6 +1363,252 @@ module z80_control (
                     bus_rd_n <= 1'b0;
                     probe_bus_active <= 1'b1;
                     prefix_cb <= 1'b0;
+                    state <= S_M1_T1;
+                end
+
+                // Phase 5: ED プレフィックス命令シーケンシャル実行
+                S_ED_FETCH_T2: begin
+                    ed_opcode <= bus_din;
+                    probe_opcode <= bus_din;
+                    bus_rd_n <= 1'b1;
+                    bus_mreq_n <= 1'b1;
+                    bus_m1_n <= 1'b1;
+                    if ((bus_din & 8'hC7) == 8'h43) begin // LD (nn), dd
+                        bus_addr <= pc_in;
+                        bus_mreq_n <= 1'b0;
+                        bus_rd_n <= 1'b0;
+                        probe_bus_active <= 1'b1;
+                        state <= S_ED_NN_RD_LO;
+                    end else if ((bus_din & 8'hC7) == 8'h4B) begin // LD dd, (nn)
+                        bus_addr <= pc_in;
+                        bus_mreq_n <= 1'b0;
+                        bus_rd_n <= 1'b0;
+                        probe_bus_active <= 1'b1;
+                        state <= S_ED_NN_RD_LO;
+                    end else if (bus_din == 8'hA0 || bus_din == 8'hB0 || bus_din == 8'hA8 || bus_din == 8'hB8) begin // LDI / LDIR / LDD / LDDR
+                        bus_addr <= hl_out;
+                        bus_mreq_n <= 1'b0;
+                        bus_rd_n <= 1'b0;
+                        bus_wr_n <= 1'b1;
+                        probe_bus_active <= 1'b1;
+                        state <= S_ED_LDIR_RD;
+                    end else if (bus_din == 8'hA1 || bus_din == 8'hB1 || bus_din == 8'hA9 || bus_din == 8'hB9) begin // CPI / CPIR / CPD / CPDR
+                        bus_addr <= hl_out;
+                        bus_mreq_n <= 1'b0;
+                        bus_rd_n <= 1'b0;
+                        bus_wr_n <= 1'b1;
+                        probe_bus_active <= 1'b1;
+                        state <= S_ED_CPIR_RD;
+                    end else if (bus_din == 8'h6F || bus_din == 8'h67) begin // RLD / RRD
+                        bus_addr <= hl_out;
+                        bus_mreq_n <= 1'b0;
+                        bus_rd_n <= 1'b0;
+                        bus_wr_n <= 1'b1;
+                        probe_bus_active <= 1'b1;
+                        state <= S_ED_RRD_RD;
+                    end else if ((bus_din & 8'hC7) == 8'h40) begin // IN r, (C)
+                        bus_addr <= bc_out;
+                        bus_iorq_n <= 1'b0;
+                        bus_rd_n <= 1'b0;
+                        bus_wr_n <= 1'b1;
+                        bus_mreq_n <= 1'b1;
+                        probe_bus_active <= 1'b1;
+                        state <= S_IO_RD_T2;
+                    end else if ((bus_din & 8'hC7) == 8'h41) begin // OUT (C), r
+                        bus_addr <= bc_out;
+                        bus_dout <= (bus_din[5:3] == 3'd6) ? 8'h00 :
+                                    (bus_din[5:3] == 3'd0) ? bc_out[15:8] :
+                                    (bus_din[5:3] == 3'd1) ? bc_out[7:0] :
+                                    (bus_din[5:3] == 3'd2) ? de_out[15:8] :
+                                    (bus_din[5:3] == 3'd3) ? de_out[7:0] :
+                                    (bus_din[5:3] == 3'd4) ? hl_out[15:8] :
+                                    (bus_din[5:3] == 3'd5) ? hl_out[7:0] :
+                                    acc_out;
+                        bus_iorq_n <= 1'b0;
+                        bus_wr_n <= 1'b0;
+                        bus_rd_n <= 1'b1;
+                        bus_mreq_n <= 1'b1;
+                        probe_bus_active <= 1'b1;
+                        state <= S_IO_WR_T2;
+                    end else if (bus_din == 8'h4D || bus_din == 8'h45) begin // RETI / RETN
+                        bus_addr <= sp_out;
+                        bus_mreq_n <= 1'b0;
+                        bus_rd_n <= 1'b0;
+                        bus_wr_n <= 1'b1;
+                        probe_bus_active <= 1'b1;
+                        state <= S_RET_RD_HI;
+                    end else begin
+                        state <= S_ED_EXEC;
+                    end
+                end
+
+                S_ED_EXEC: begin
+                    bus_addr <= pc_in;
+                    bus_m1_n <= 1'b0;
+                    bus_mreq_n <= 1'b0;
+                    bus_rd_n <= 1'b0;
+                    probe_bus_active <= 1'b1;
+                    prefix_ed <= 1'b0;
+                    state <= S_M1_T1;
+                end
+
+                S_ED_NN_RD_LO: begin
+                    imm_low <= bus_din;
+                    bus_addr <= pc_in;
+                    bus_mreq_n <= 1'b0;
+                    bus_rd_n <= 1'b0;
+                    probe_bus_active <= 1'b1;
+                    state <= S_ED_NN_RD_HI;
+                end
+
+                S_ED_NN_RD_HI: begin
+                    target_addr <= {bus_din, imm_low};
+                    if ((ed_opcode & 8'hC7) == 8'h43) begin // LD (nn), dd
+                        temp16 <= get_pair16(ed_opcode[5:4], bc_out, de_out, hl_out, sp_out);
+                        bus_addr <= {bus_din, imm_low};
+                        case (ed_opcode[5:4])
+                            2'd0: bus_dout <= bc_out[7:0];
+                            2'd1: bus_dout <= de_out[7:0];
+                            2'd2: bus_dout <= hl_out[7:0];
+                            2'd3: bus_dout <= sp_out[7:0];
+                        endcase
+                        bus_mreq_n <= 1'b0;
+                        bus_wr_n <= 1'b0;
+                        bus_rd_n <= 1'b1;
+                        probe_bus_active <= 1'b1;
+                        state <= S_ED_NN_WR_HI;
+                    end else begin // LD dd, (nn)
+                        bus_addr <= {bus_din, imm_low};
+                        bus_mreq_n <= 1'b0;
+                        bus_rd_n <= 1'b0;
+                        probe_bus_active <= 1'b1;
+                        state <= S_LD_HL_NN_RD_HI;
+                    end
+                end
+
+                S_ED_NN_WR_HI: begin
+                    bus_addr <= target_addr + 16'd1;
+                    bus_dout <= temp16[15:8];
+                    bus_mreq_n <= 1'b0;
+                    bus_wr_n <= 1'b0;
+                    probe_bus_active <= 1'b1;
+                    state <= S_MEM_WR_T1;
+                end
+
+                S_ED_LDIR_RD: begin
+                    mem_data_buf <= bus_din;
+                    bus_addr <= de_out;
+                    bus_dout <= bus_din;
+                    bus_mreq_n <= 1'b0;
+                    bus_wr_n <= 1'b0;
+                    bus_rd_n <= 1'b1;
+                    probe_bus_active <= 1'b1;
+                    state <= S_ED_LDIR_WR;
+                end
+
+                S_ED_LDIR_WR: begin
+                    bus_mreq_n <= 1'b1;
+                    bus_wr_n <= 1'b1;
+                    state <= S_ED_LDIR_EXEC;
+                end
+
+                S_ED_LDIR_EXEC: begin
+                    bus_addr <= pc_in;
+                    bus_m1_n <= 1'b0;
+                    bus_mreq_n <= 1'b0;
+                    bus_rd_n <= 1'b0;
+                    probe_bus_active <= 1'b1;
+                    prefix_ed <= 1'b0;
+                    state <= S_M1_T1;
+                end
+
+                S_ED_CPIR_RD: begin
+                    mem_data_buf <= bus_din;
+                    bus_mreq_n <= 1'b1;
+                    bus_rd_n <= 1'b1;
+                    state <= S_ED_CPIR_EXEC;
+                end
+
+                S_ED_CPIR_EXEC: begin
+                    bus_addr <= pc_in;
+                    bus_m1_n <= 1'b0;
+                    bus_mreq_n <= 1'b0;
+                    bus_rd_n <= 1'b0;
+                    probe_bus_active <= 1'b1;
+                    prefix_ed <= 1'b0;
+                    state <= S_M1_T1;
+                end
+
+                S_ED_RRD_RD: begin
+                    mem_data_buf <= bus_din;
+                    bus_addr <= hl_out;
+                    bus_dout <= (ed_opcode == 8'h6F) ? {bus_din[3:0], acc_out[3:0]} : {acc_out[3:0], bus_din[7:4]};
+                    bus_mreq_n <= 1'b0;
+                    bus_wr_n <= 1'b0;
+                    bus_rd_n <= 1'b1;
+                    probe_bus_active <= 1'b1;
+                    state <= S_ED_RRD_WR;
+                end
+
+                S_ED_RRD_WR: begin
+                    bus_mreq_n <= 1'b1;
+                    bus_wr_n <= 1'b1;
+                    state <= S_ED_RRD_EXEC;
+                end
+
+                S_ED_RRD_EXEC: begin
+                    bus_addr <= pc_in;
+                    bus_m1_n <= 1'b0;
+                    bus_mreq_n <= 1'b0;
+                    bus_rd_n <= 1'b0;
+                    probe_bus_active <= 1'b1;
+                    prefix_ed <= 1'b0;
+                    state <= S_M1_T1;
+                end
+
+                S_IO_RD_T1: begin
+                    imm_low <= bus_din;
+                    bus_addr <= {acc_out, bus_din};
+                    bus_iorq_n <= 1'b0;
+                    bus_rd_n <= 1'b0;
+                    bus_wr_n <= 1'b1;
+                    bus_mreq_n <= 1'b1;
+                    probe_bus_active <= 1'b1;
+                    state <= S_IO_RD_T2;
+                end
+
+                S_IO_RD_T2: begin
+                    bus_iorq_n <= 1'b1;
+                    bus_rd_n <= 1'b1;
+                    bus_addr <= pc_in;
+                    bus_m1_n <= 1'b0;
+                    bus_mreq_n <= 1'b0;
+                    bus_rd_n <= 1'b0;
+                    probe_bus_active <= 1'b1;
+                    prefix_ed <= 1'b0;
+                    state <= S_M1_T1;
+                end
+
+                S_IO_WR_T1: begin
+                    bus_addr <= {acc_out, bus_din};
+                    bus_dout <= acc_out;
+                    bus_iorq_n <= 1'b0;
+                    bus_rd_n <= 1'b1;
+                    bus_wr_n <= 1'b0;
+                    bus_mreq_n <= 1'b1;
+                    probe_bus_active <= 1'b1;
+                    state <= S_IO_WR_T2;
+                end
+
+                S_IO_WR_T2: begin
+                    bus_iorq_n <= 1'b1;
+                    bus_wr_n <= 1'b1;
+                    bus_addr <= pc_in;
+                    bus_m1_n <= 1'b0;
+                    bus_mreq_n <= 1'b0;
+                    bus_rd_n <= 1'b0;
+                    probe_bus_active <= 1'b1;
+                    prefix_ed <= 1'b0;
                     state <= S_M1_T1;
                 end
 

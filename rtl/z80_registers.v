@@ -74,7 +74,37 @@ module z80_registers (
     output wire [15:0] probe_hl_alt,
     output wire [15:0] probe_ix,
     output wire [15:0] probe_iy,
-    output wire [15:0] probe_sp
+    output wire [15:0] probe_sp,
+
+    // Phase 5 ブロック転送・検索制御
+    input  wire        block_trans_en,
+    input  wire        block_trans_dec,
+    input  wire        block_search_en,
+    input  wire        block_search_dec,
+
+    // 特殊レジスタ制御 (I, R, IFF, IM)
+    input  wire        i_wr_en,
+    input  wire [7:0]  i_wr_data,
+    output wire [7:0]  i_out,
+
+    input  wire        r_wr_en,
+    input  wire [7:0]  r_wr_data,
+    output wire [7:0]  r_out,
+
+    input  wire        im_wr_en,
+    input  wire [1:0]  im_wr_data,
+
+    input  wire        iff_wr_en,
+    input  wire        iff1_val,
+    input  wire        iff2_val,
+    output wire        iff2_out,
+
+    // 特殊レジスタプローブ
+    output wire [7:0]  probe_i,
+    output wire [7:0]  probe_r,
+    output wire [1:0]  probe_im,
+    output wire        probe_iff1,
+    output wire        probe_iff2
 );
 
     // メインレジスタ
@@ -94,6 +124,11 @@ module z80_registers (
     reg [15:0] r_sp;
     reg [15:0] r_pc;
 
+    // 特殊レジスタ (Phase 5)
+    reg [7:0]  r_i, r_r;
+    reg        r_iff1, r_iff2;
+    reg [1:0]  r_im;
+
     assign pc_out    = r_pc;
     assign flags_out = r_f;
 
@@ -103,6 +138,11 @@ module z80_registers (
     assign bc_out  = {r_b, r_c};
     assign de_out  = {r_d, r_e};
     assign sp_out  = r_sp;
+
+    // 特殊レジスタ参照
+    assign i_out    = r_i;
+    assign r_out    = r_r;
+    assign iff2_out = r_iff2;
 
     // プローブ出力バインド
     assign probe_af     = {r_a, r_f};
@@ -116,6 +156,11 @@ module z80_registers (
     assign probe_ix     = r_ix;
     assign probe_iy     = r_iy;
     assign probe_sp     = r_sp;
+    assign probe_i      = r_i;
+    assign probe_r      = r_r;
+    assign probe_im     = r_im;
+    assign probe_iff1   = r_iff1;
+    assign probe_iff2   = r_iff2;
 
     // 8-bit ソースレジスタ読出 MUX
     always @(*) begin
@@ -146,6 +191,11 @@ module z80_registers (
             r_iy <= 16'h0000;
             r_sp <= 16'h0000;
             r_pc <= 16'h0000;
+            r_i  <= 8'h00;
+            r_r  <= 8'h00;
+            r_iff1 <= 1'b0;
+            r_iff2 <= 1'b0;
+            r_im <= 2'b00;
         end else if (restore_en) begin
             // タイムトラベル（過去状態の即時直接注入）
             r_pc <= restore_pc;
@@ -160,6 +210,11 @@ module z80_registers (
             r_sp <= restore_sp;
             r_ix <= restore_ix;
             r_iy <= restore_iy;
+            r_i  <= 8'h00;
+            r_r  <= 8'h00;
+            r_iff1 <= 1'b0;
+            r_iff2 <= 1'b0;
+            r_im <= 2'b00;
         end else begin
             // 1. PC 更新
             if (pc_load) begin
@@ -223,6 +278,38 @@ module z80_registers (
                         2'd3: begin if (!sp_wr_en) r_sp <= pair_wr_data; end
                     endcase
                 end
+            end
+
+            // 7. ブロック転送 (LDI/LDIR/LDD/LDDR)
+            if (block_trans_en) begin
+                if (!block_trans_dec) begin
+                    {r_h, r_l} <= {r_h, r_l} + 16'd1;
+                    {r_d, r_e} <= {r_d, r_e} + 16'd1;
+                end else begin
+                    {r_h, r_l} <= {r_h, r_l} - 16'd1;
+                    {r_d, r_e} <= {r_d, r_e} - 16'd1;
+                end
+                {r_b, r_c} <= {r_b, r_c} - 16'd1;
+            end
+
+            // 8. ブロック検索 (CPI/CPIR/CPD/CPDR)
+            if (block_search_en) begin
+                if (!block_search_dec) begin
+                    {r_h, r_l} <= {r_h, r_l} + 16'd1;
+                end else begin
+                    {r_h, r_l} <= {r_h, r_l} - 16'd1;
+                end
+                {r_b, r_c} <= {r_b, r_c} - 16'd1;
+            end
+
+            // 9. 特殊レジスタ更新 (I, R, IFF, IM)
+            if (pc_inc) r_r[6:0] <= r_r[6:0] + 7'd1;
+            if (i_wr_en) r_i <= i_wr_data;
+            if (r_wr_en) r_r <= r_wr_data;
+            if (im_wr_en) r_im <= im_wr_data;
+            if (iff_wr_en) begin
+                r_iff1 <= iff1_val;
+                r_iff2 <= iff2_val;
             end
         end
     end
