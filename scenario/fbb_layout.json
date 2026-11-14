@@ -15,19 +15,19 @@
                                 "activeView": "registerMonitor",
                                 "id": "2"
                             },
-                            "size": 810
+                            "size": 686
                         },
                         {
                             "type": "leaf",
                             "data": {
                                 "views": [
-                                    "dtsVisualizer",
-                                    "rct-canvas"
+                                    "rct-canvas",
+                                    "dtsVisualizer"
                                 ],
                                 "activeView": "rct-canvas",
-                                "id": "1"
+                                "id": "3"
                             },
-                            "size": 350
+                            "size": 474
                         }
                     ],
                     "size": 340
@@ -64,7 +64,7 @@
                                                         "activeView": "rct-code-view",
                                                         "id": "10"
                                                     },
-                                                    "size": 910
+                                                    "size": 922
                                                 },
                                                 {
                                                     "type": "leaf",
@@ -75,10 +75,10 @@
                                                         "activeView": "rct-registers",
                                                         "id": "15"
                                                     },
-                                                    "size": 261
+                                                    "size": 249
                                                 }
                                             ],
-                                            "size": 573
+                                            "size": 535
                                         },
                                         {
                                             "type": "branch",
@@ -92,7 +92,7 @@
                                                         "activeView": "registerTracer",
                                                         "id": "5"
                                                     },
-                                                    "size": 844
+                                                    "size": 670
                                                 },
                                                 {
                                                     "type": "leaf",
@@ -103,10 +103,10 @@
                                                         "activeView": "rct-breakpoints",
                                                         "id": "6"
                                                     },
-                                                    "size": 327
+                                                    "size": 501
                                                 }
                                             ],
-                                            "size": 468
+                                            "size": 506
                                         }
                                     ],
                                     "size": 1171
@@ -160,22 +160,6 @@
                 "_componentName": "registerMonitor"
             },
             "title": "Registers"
-        },
-        "dtsVisualizer": {
-            "id": "dtsVisualizer",
-            "contentComponent": "dtsVisualizer",
-            "params": {
-                "_componentName": "dtsVisualizer"
-            },
-            "title": "DTS Visualizer & AI"
-        },
-        "rct-canvas": {
-            "id": "rct-canvas",
-            "contentComponent": "rct-canvas",
-            "params": {
-                "_componentName": "rct-canvas"
-            },
-            "title": "RCT Core Canvas"
         },
         "rct-controller": {
             "id": "rct-controller",
@@ -232,9 +216,25 @@
                 "_componentName": "rct-stack"
             },
             "title": "RCT Stack"
+        },
+        "rct-canvas": {
+            "id": "rct-canvas",
+            "contentComponent": "rct-canvas",
+            "params": {
+                "_componentName": "rct-canvas"
+            },
+            "title": "RCT Core Canvas"
+        },
+        "dtsVisualizer": {
+            "id": "dtsVisualizer",
+            "contentComponent": "dtsVisualizer",
+            "params": {
+                "_componentName": "dtsVisualizer"
+            },
+            "title": "DTS Visualizer & AI"
         }
     },
-    "activeGroup": "1",
+    "activeGroup": "3",
     "_fbb_pane_state": {
         "tracer": {
             "selectedGroup": "ALL",
@@ -245,8 +245,28 @@
             "expandedDevices": {
                 "vfpga_z80": true
             },
-            "expandedGroups": {}
+            "expandedGroups": {
+                "vfpga_z80_Control & Status": false
+            }
         },
-        "hiddenTraceKeys": {}
+        "hiddenTraceKeys": {
+            "vfpga_z80_CTRL": true,
+            "vfpga_z80_STATUS": true,
+            "vfpga_z80_CMD": true,
+            "vfpga_z80_CYCLES": true,
+            "vfpga_z80_PC": false,
+            "vfpga_z80_SP": false,
+            "vfpga_z80_AF": false,
+            "vfpga_z80_BC": false,
+            "vfpga_z80_DE": false,
+            "vfpga_z80_HL": false,
+            "vfpga_z80_IX": false,
+            "vfpga_z80_IY": false,
+            "vfpga_z80_FLAGS": false,
+            "vfpga_z80_AF_ALT": false,
+            "vfpga_z80_BC_ALT": false,
+            "vfpga_z80_DE_ALT": false,
+            "vfpga_z80_HL_ALT": false
+        }
     }
 }

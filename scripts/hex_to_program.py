@@ -217,6 +217,18 @@ def disassemble_z80(mem, min_addr, max_addr):
                 d = mem[pc]; n = mem[pc+1]; pc += 2; bytes_list.extend([f"{d:02X}", f"{n:02X}"])
                 disp = f"+{d}" if d < 128 else f"-{256-d}"
                 mnem = "LD"; dest = f"({reg_name}{disp}),"; src = f"${n:02X}"; comment = f"; Store immediate ${n:02X} into ({reg_name}{disp})"
+            elif (sub_op & 0xC7) in [0x04, 0x05]:
+                reg_h = f"{reg_name}H"; reg_l = f"{reg_name}L"
+                r_map = ['B', 'C', 'D', 'E', reg_h, reg_l, f"({reg_name})", 'A']
+                target_reg = r_map[(sub_op >> 3) & 7]
+                mnem = "INC" if (sub_op & 0x07) == 0x04 else "DEC"
+                dest = target_reg; comment = f"; {mnem} {target_reg}"
+            elif (sub_op & 0xC7) == 0x06:
+                n = mem[pc]; pc += 1; bytes_list.append(f"{n:02X}")
+                reg_h = f"{reg_name}H"; reg_l = f"{reg_name}L"
+                r_map = ['B', 'C', 'D', 'E', reg_h, reg_l, f"({reg_name})", 'A']
+                target_reg = r_map[(sub_op >> 3) & 7]
+                mnem = "LD"; dest = f"{target_reg},"; src = f"${n:02X}"; comment = f"; Load {target_reg} with immediate ${n:02X}"
             elif (sub_op & 0xC0) == 0x40:
                 if (sub_op & 7) == 6:
                     d = mem[pc]; pc += 1; bytes_list.append(f"{d:02X}")

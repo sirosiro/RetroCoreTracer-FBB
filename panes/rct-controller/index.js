@@ -288,6 +288,12 @@ function getRctStore() {
           else if (src === 'DE') srcVal = (rD << 8) | rE;
           else if (src === 'HL') srcVal = (rH << 8) | rL;
           else if (src === 'SP') srcVal = parseInt(state.regs.sp.replace('0x', ''), 16) || 0;
+          else if (src === 'IX') srcVal = parseInt(state.regs.ix.replace('0x', ''), 16) || 0;
+          else if (src === 'IY') srcVal = parseInt(state.regs.iy.replace('0x', ''), 16) || 0;
+          else if (src === 'IXH') { const ix = parseInt(state.regs.ix.replace('0x', ''), 16) || 0; srcVal = (ix >> 8) & 0xFF; }
+          else if (src === 'IXL') { const ix = parseInt(state.regs.ix.replace('0x', ''), 16) || 0; srcVal = ix & 0xFF; }
+          else if (src === 'IYH') { const iy = parseInt(state.regs.iy.replace('0x', ''), 16) || 0; srcVal = (iy >> 8) & 0xFF; }
+          else if (src === 'IYL') { const iy = parseInt(state.regs.iy.replace('0x', ''), 16) || 0; srcVal = iy & 0xFF; }
 
           if (dest === 'A') rA = srcVal & 0xFF;
           else if (dest === 'B') rB = srcVal & 0xFF;
@@ -299,7 +305,27 @@ function getRctStore() {
           else if (dest === 'BC') { rB = (srcVal >> 8) & 0xFF; rC = srcVal & 0xFF; }
           else if (dest === 'DE') { rD = (srcVal >> 8) & 0xFF; rE = srcVal & 0xFF; }
           else if (dest === 'HL') { rH = (srcVal >> 8) & 0xFF; rL = srcVal & 0xFF; }
-          else if (dest === 'SP') {
+          else if (dest === 'IX') {
+            state.regs.ix = '0x' + (srcVal & 0xFFFF).toString(16).padStart(4, '0').toUpperCase();
+          } else if (dest === 'IY') {
+            state.regs.iy = '0x' + (srcVal & 0xFFFF).toString(16).padStart(4, '0').toUpperCase();
+          } else if (dest === 'IXH') {
+            let ix = parseInt(state.regs.ix.replace('0x', ''), 16) || 0;
+            ix = ((srcVal & 0xFF) << 8) | (ix & 0xFF);
+            state.regs.ix = '0x' + ix.toString(16).padStart(4, '0').toUpperCase();
+          } else if (dest === 'IXL') {
+            let ix = parseInt(state.regs.ix.replace('0x', ''), 16) || 0;
+            ix = (ix & 0xFF00) | (srcVal & 0xFF);
+            state.regs.ix = '0x' + ix.toString(16).padStart(4, '0').toUpperCase();
+          } else if (dest === 'IYH') {
+            let iy = parseInt(state.regs.iy.replace('0x', ''), 16) || 0;
+            iy = ((srcVal & 0xFF) << 8) | (iy & 0xFF);
+            state.regs.iy = '0x' + iy.toString(16).padStart(4, '0').toUpperCase();
+          } else if (dest === 'IYL') {
+            let iy = parseInt(state.regs.iy.replace('0x', ''), 16) || 0;
+            iy = (iy & 0xFF00) | (srcVal & 0xFF);
+            state.regs.iy = '0x' + iy.toString(16).padStart(4, '0').toUpperCase();
+          } else if (dest === 'SP') {
             state.regs.sp = '0x' + (srcVal & 0xFFFF).toString(16).padStart(4, '0').toUpperCase();
           }
         } else if (curItem.mnem === 'ADD') {
@@ -364,7 +390,7 @@ function getRctStore() {
             shouldJump = !!state.flags.z;
             targetCandidate = d.replace(/^Z,\s*/i, '') || s;
           } else if (/^Z$/i.test(d)) {
-            shouldJump = !state.flags.z;
+            shouldJump = !!state.flags.z;
             targetCandidate = s;
           } else if (/^NC,\s*(.*)$/i.test(d)) {
             shouldJump = !state.flags.c;
@@ -430,7 +456,7 @@ function getRctStore() {
             shouldJump = !!state.flags.pv;
             targetCandidate = d.replace(/^PE,\s*/i, '') || s;
           } else if (/^PE$/i.test(d)) {
-            shouldJump = !state.flags.pv;
+            shouldJump = !!state.flags.pv;
             targetCandidate = s;
           } else if (/^P,\s*(.*)$/i.test(d)) {
             shouldJump = !state.flags.s;
@@ -476,8 +502,29 @@ function getRctStore() {
           if (dest === 'A') { rA = (rA + 1) & 0xFF; }
           else if (dest === 'B') { rB = (rB + 1) & 0xFF; }
           else if (dest === 'C') { rC = (rC + 1) & 0xFF; }
-          const val = dest === 'A' ? rA : (dest === 'B' ? rB : rC);
-          const z = val === 0 ? 1 : 0;
+          else if (dest === 'D') { rD = (rD + 1) & 0xFF; }
+          else if (dest === 'E') { rE = (rE + 1) & 0xFF; }
+          else if (dest === 'H') { rH = (rH + 1) & 0xFF; }
+          else if (dest === 'L') { rL = (rL + 1) & 0xFF; }
+          else if (dest === 'IXH') {
+            let ix = parseInt(state.regs.ix.replace('0x', ''), 16) || 0;
+            let val = ((ix >> 8) + 1) & 0xFF;
+            state.regs.ix = '0x' + (((val & 0xFF) << 8) | (ix & 0xFF)).toString(16).padStart(4, '0').toUpperCase();
+          } else if (dest === 'IXL') {
+            let ix = parseInt(state.regs.ix.replace('0x', ''), 16) || 0;
+            let val = ((ix & 0xFF) + 1) & 0xFF;
+            state.regs.ix = '0x' + ((ix & 0xFF00) | (val & 0xFF)).toString(16).padStart(4, '0').toUpperCase();
+          } else if (dest === 'IYH') {
+            let iy = parseInt(state.regs.iy.replace('0x', ''), 16) || 0;
+            let val = ((iy >> 8) + 1) & 0xFF;
+            state.regs.iy = '0x' + (((val & 0xFF) << 8) | (iy & 0xFF)).toString(16).padStart(4, '0').toUpperCase();
+          } else if (dest === 'IYL') {
+            let iy = parseInt(state.regs.iy.replace('0x', ''), 16) || 0;
+            let val = ((iy & 0xFF) + 1) & 0xFF;
+            state.regs.iy = '0x' + ((iy & 0xFF00) | (val & 0xFF)).toString(16).padStart(4, '0').toUpperCase();
+          }
+          const val = dest === 'A' ? rA : (dest === 'B' ? rB : (dest === 'C' ? rC : (dest === 'D' ? rD : (dest === 'E' ? rE : (dest === 'H' ? rH : rL)))));
+          const z = (val & 0xFF) === 0 ? 1 : 0;
           const s = (val & 0x80) ? 1 : 0;
           state.flags = { ...state.flags, s, z };
           tCycles = 4;
@@ -486,8 +533,29 @@ function getRctStore() {
           if (dest === 'A') { rA = (rA - 1) & 0xFF; }
           else if (dest === 'B') { rB = (rB - 1) & 0xFF; }
           else if (dest === 'C') { rC = (rC - 1) & 0xFF; }
-          const val = dest === 'A' ? rA : (dest === 'B' ? rB : rC);
-          const z = val === 0 ? 1 : 0;
+          else if (dest === 'D') { rD = (rD - 1) & 0xFF; }
+          else if (dest === 'E') { rE = (rE - 1) & 0xFF; }
+          else if (dest === 'H') { rH = (rH - 1) & 0xFF; }
+          else if (dest === 'L') { rL = (rL - 1) & 0xFF; }
+          else if (dest === 'IXH') {
+            let ix = parseInt(state.regs.ix.replace('0x', ''), 16) || 0;
+            let val = ((ix >> 8) - 1) & 0xFF;
+            state.regs.ix = '0x' + (((val & 0xFF) << 8) | (ix & 0xFF)).toString(16).padStart(4, '0').toUpperCase();
+          } else if (dest === 'IXL') {
+            let ix = parseInt(state.regs.ix.replace('0x', ''), 16) || 0;
+            let val = ((ix & 0xFF) - 1) & 0xFF;
+            state.regs.ix = '0x' + ((ix & 0xFF00) | (val & 0xFF)).toString(16).padStart(4, '0').toUpperCase();
+          } else if (dest === 'IYH') {
+            let iy = parseInt(state.regs.iy.replace('0x', ''), 16) || 0;
+            let val = ((iy >> 8) - 1) & 0xFF;
+            state.regs.iy = '0x' + (((val & 0xFF) << 8) | (iy & 0xFF)).toString(16).padStart(4, '0').toUpperCase();
+          } else if (dest === 'IYL') {
+            let iy = parseInt(state.regs.iy.replace('0x', ''), 16) || 0;
+            let val = ((iy & 0xFF) - 1) & 0xFF;
+            state.regs.iy = '0x' + ((iy & 0xFF00) | (val & 0xFF)).toString(16).padStart(4, '0').toUpperCase();
+          }
+          const val = dest === 'A' ? rA : (dest === 'B' ? rB : (dest === 'C' ? rC : (dest === 'D' ? rD : (dest === 'E' ? rE : (dest === 'H' ? rH : rL)))));
+          const z = (val & 0xFF) === 0 ? 1 : 0;
           const s = (val & 0x80) ? 1 : 0;
           state.flags = { ...state.flags, s, z, n: 1 };
           tCycles = 4;
