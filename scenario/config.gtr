@@ -3,9 +3,26 @@
 
 &vfpga_z80 {
     registers =
+        /* Control & Status */
         "CTRL   @ 0x00",
         "STATUS @ 0x04",
         "CMD    @ 0x08",
-        "CYCLES @ 0x0C";
-};
+        "CYCLES @ 0x0C",
 
+        /* Main Registers */
+        "PC     @ 0x10",
+        "SP     @ 0x14",
+        "AF     @ 0x18",
+        "BC     @ 0x1C",
+        "DE     @ 0x20",
+        "HL     @ 0x24",
+        "IX     @ 0x28",
+        "IY     @ 0x2C",
+        "FLAGS  @ 0x30",
+
+        /* Alternate Registers */
+        "AF_ALT @ 0x34",
+        "BC_ALT @ 0x38",
+        "DE_ALT @ 0x3C",
+        "HL_ALT @ 0x40";
+};

@@ -41,6 +41,20 @@
    - `~/.fbb/plugins/fbb-plugin-rct-z80` のシンボリックリンクにより F-BB 側にプラグインとして自動登録。
    - `bin/fbb plugin list`、`bin/fbb plugin validate`、`bin/fbb test`、および `./start_lab.sh` からシームレスに認識・起動。
 
+7. **F-BB 標準 Register Monitor / Register State Tracer 完全統合**:
+   - Z80 の全 17 レジスタ（Control/Status, PC, SP, AF, BC, DE, HL, IX, IY, FLAGS, AF', BC', DE', HL'）を F-BB の UIO MMIO 共有メモリ（`/tmp/vfpga_z80`）へ完全マッピング。
+   - F-BB 標準の `Register Monitor` ペインおよび波形アナライザ `Register State Tracer` ペインとゼロ遅延で完全連動。
+
+8. **TIME-TRAVEL 連動＆非破壊インスペクション・インターロック**:
+   - Tracer 上の波形クリックやシークにより、`fbb_dashboard_sync` を介して Z80 の全レジスタ・フラグが過去スナップショットに自動追従。
+   - 過去状態のシーク中に誤って新規スナップショットや MMIO 書き込みが再生成されるのを防ぐバックフロー・インターロックを完備。
+
+9. **HALT 命令自動検知＆無駄なサイクル進行防止**:
+   - `HALT` 命令に到達した時点で自動的にタイマーとサイクルカウントを即時停止（`CPU HALTED`）し、プログラム終了後の不要なクロック増加やトレーサー履歴の汚染を防止。
+
+10. **GTR サブグループ化による整理された Register Monitor レイアウト**:
+    - `scenario/config.gtr` にて `Control & Status`, `Main Registers`, `Alternate Registers` に論理分割し、F-BB ダッシュボード上でスクロール不要の美しいマルチカラムカード配置を実現。
+
 ---
 
 ## 4層アーキテクチャ (4-Layer Architecture)
@@ -125,9 +139,10 @@ RetroCoreTracer-FBB/
 ├── scripts/                    # ユーティリティスクリプト
 │   └── hex_to_program.py       # Intel HEX 構造化逆アセンブラ & JSON 生成
 ├── scenario/                   # F-BB 外部検証テストシナリオ
-│   ├── config.gtr              # GTR (Z80 UIO 仮想レジスタ定義)
+│   ├── config.gtr              # GTR (Z80 UIO 17仮想レジスタ・サブグループ定義)
 │   ├── config.dts              # Device Tree (Z80 UIO & UART 標準ノード定義)
-│   ├── main.c                  # シナリオ検証ファームウェア (MMIO)
+│   ├── main.c                  # シナリオ検証ファームウェア (17レジスタ MMIO)
+│   ├── fbb_layout.json         # F-BB 標準 Register Monitor / Tracer 統合レイアウト
 │   ├── CMakeLists.txt          # シナリオビルド設定
 │   ├── run.sh                  # シナリオ起動ランナースクリプト
 │   └── vfpga_device_config.h   # IntelliSense / clangd 用事前生成ヘッダー
@@ -150,21 +165,21 @@ RetroCoreTracer-FBB/
 -----------------------------------------------------------------------------------
 Language                         files          blank        comment           code
 -----------------------------------------------------------------------------------
-JavaScript                           8            522            119           6784
-Verilog-SystemVerilog                4             88             62            651
-Markdown                             4            107              0            426
-Python                               2             54             17            389
-JSON                                10              0              0            357
-C++                                  2             46              9            277
-C/C++ Header                         5             46             11            262
+JavaScript                           8            530            122           7052
+Verilog-SystemVerilog                4            274            128           2518
+Python                               3             74             52           1107
+C++                                  2             52             12            577
+Markdown                             4            113              0            481
+JSON                                10              0              0            395
+C/C++ Header                         5             48             11            285
+Bourne Shell                         1             10              6             67
 CMake                                2             11              0             60
-Bourne Shell                         1              9              6             54
-C                                    1             11              1             46
+C                                    1             11              1             59
 -----------------------------------------------------------------------------------
-SUM:                                39            894            225           9306
+SUM:                                40           1123            332          12601
 -----------------------------------------------------------------------------------
 ```
-*(ドキュメント Markdown 等を含む総行数は 10,425 行)*
+*(ドキュメント Markdown 等を含む総行数は 14,056 行)*
 
 ---
 

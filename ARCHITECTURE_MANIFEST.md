@@ -59,13 +59,17 @@ F-BB Dockview ワークスペースに対応した 7 つの独立特化型ペイ
 7. `rct-breakpoints`: PC/メモリアクセス条件ブレークポイント管理
 - `retro-core-tracer` (`pane/`): レガシー統合型オールインワンペイン
 
+### 2.2 F-BB ダッシュボード時刻同期・安全ガード (`fbb_dashboard_sync`)
+F-BB 本体の `BroadcastChannel('fbb_dashboard_sync')` を全 RCT ペインが購読する。
+F-BB 側で過去スナップショットをタイムトラベル閲覧中（`!isLive`）は、RCT 側の全ペインに `[TIME-TRAVELING]` バッジを表示して過去状態に表示を連動させるとともに、物理シミュレーションを進行・巻き戻すボタン（Step, Backstep, Run）を無効化（Disabled）し、物理状態と表示状態の乖離を原理的に防止する。
+
 ---
 
 ## 3. 通信プロトコル規約 (JSON-RPC & Telemetry Interface)
 
 Layer 1 (UI) と Layer 2 (C++ Daemon) は、UNIX ドメインソケットおよび WebSocket を介して以下の JSON 仕様で通信する。
 
-### 3.1. UI  Daemon 制御コマンド (Inbound Commands)
+### 3.1. UI → Daemon 制御コマンド (Inbound Commands)
 ```json
 { "cmd": "step", "count": 1 }
 { "cmd": "backstep", "count": 1 }
@@ -77,7 +81,7 @@ Layer 1 (UI) と Layer 2 (C++ Daemon) は、UNIX ドメインソケットおよ�
 { "cmd": "remove_breakpoint", "id": 1 }
 ```
 
-### 3.2. Daemon  UI テレメトリ通知 (Outbound Telemetry)
+### 3.2. Daemon → UI テレメトリ通知 (Outbound Telemetry)
 ステップ実行またはクロック更新ごとに、以下の完全スナップショットを JSON 配信する：
 ```json
 {
@@ -109,18 +113,43 @@ Layer 1 (UI) と Layer 2 (C++ Daemon) は、UNIX ドメインソケットおよ�
 }
 ```
 
+### 3.3. F-BB 共通 MMIO バス結合仕様 (`config.gtr`)
+F-BB 標準の「Registers ペイン」および「Tracer ペイン（オシロスコープ波形）」へ Z80 状態を供給するため、以下の MMIO レジスタマップを `scenario/config.gtr` に定義・同期する：
+```dts
+&vfpga_z80 {
+    registers =
+        "CTRL   @ 0x00",
+        "STATUS @ 0x04",
+        "CMD    @ 0x08",
+        "CYCLES @ 0x0C",
+        "PC     @ 0x10",
+        "SP     @ 0x14",
+        "AF     @ 0x18",
+        "BC     @ 0x1C",
+        "DE     @ 0x20",
+        "HL     @ 0x24",
+        "IX     @ 0x28",
+        "IY     @ 0x2C",
+        "FLAGS  @ 0x30",
+        "AF_ALT @ 0x34",
+        "BC_ALT @ 0x38",
+        "DE_ALT @ 0x3C",
+        "HL_ALT @ 0x40";
+};
+```
+
 ---
 
 ## 4. タイムトラベル（Undo / Backstep）の決定論仕様
 
 1. **リングバッファ構造 (`SnapshotRingBuffer`)**:
    過去 1,000 ステップ分の CPU 全レジスタ、クロックサイクル数、および「直前のメモリ書き換え差分（Undo Diff: 変更されたアドレスと元の値）」をリングバッファに常時記録する。
-2. **状態復元プロトコル (State Restoration)**:
+2. **非破壊・追記型イベントソーシング（Append-Only Monotonic Timeline）**:
    `backstep` コマンド受信時：
-   - バッファのポインタを 1 つ戻す。
+   - 過去のスナップショットを履歴から破棄（`pop_back`）せず、復元後の状態を「BACKSTEP イベント」としてタイムラインの末尾に追記する。
    - メモリ差分（Undo Diff）を仮想 64KB メモリに逆書き込みする。
-   - Verilog RTL コアの復元用ポート（`probe_restore_*`）へ前状態のレジスタ値を注入し、内部フリップフロップを過去の状態に同期させる。
-   - 復元後のテレメトリを即座に UI に送出する。
+   - Verilog RTL コアの復元用ポート（`restore_*`）へ前状態のレジスタ値を注入し、内部フリップフロップを過去の状態に同期させる。
+   - 復元後のレジスタ値を即座に MMIO（`vfpga_z80`）およびテレメトリに反映し、F-BB の `traceHistory` に新しい時系列点として記録させる。
 
 ---
 
@@ -151,3 +180,8 @@ CIP の規範に基づき、すべてのソースコード（Verilog, C++, React
 - **Status:** 承認済 (Accepted)
 - **Context:** F-BB のリポジトリを一切汚さず、PPA/DPPA のサードパーティ開発者体験を実証する。
 - **Decision:** シナリオ（`config.gtr`, `config.dts`, `run.sh`）は `RetroCoreTracer-FBB/scenario/` に自己完結させ、`./start_lab.sh <absolute_path>` で直接起動する。
+
+### ADR #004: F-BB 標準 Tracer 連携と非破壊追記型タイムトラベル（Append-Only Time-Travel & UI Guard）
+- **Status:** 承認済 (Accepted)
+- **Context:** F-BB 標準の Tracer ペイン（オシロスコープ波形）で Z80 レジスタが可視化されず、またタイムトラベル操作が RCT 独自 Backstep と二重化して画面内の時間軸分裂を招いていた。
+- **Decision:** `config.gtr` に Z80 主要内部レジスタを MMIO マッピングして F-BB 側に履歴管理を一本化（Single Source of Truth 化）。Backstep は履歴を削除しない追記型とし、波形の時間軸連続性と実験トレーサビリティを完全担保する。F-BB タイムトラベル閲覧中は RCT ペインにバッジを表示し、シミュレータ操作ボタンを無効化（UI Guard）して状態乖離を防止する。

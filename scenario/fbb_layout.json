@@ -15,22 +15,22 @@
                                 "activeView": "registerMonitor",
                                 "id": "2"
                             },
-                            "size": 297
+                            "size": 810
                         },
                         {
                             "type": "leaf",
                             "data": {
                                 "views": [
                                     "dtsVisualizer",
-                                    "registerTracer"
+                                    "rct-canvas"
                                 ],
-                                "activeView": "dtsVisualizer",
-                                "id": "3"
+                                "activeView": "rct-canvas",
+                                "id": "1"
                             },
-                            "size": 679
+                            "size": 350
                         }
                     ],
-                    "size": 343
+                    "size": 340
                 },
                 {
                     "type": "branch",
@@ -44,7 +44,7 @@
                                 "activeView": "rct-controller",
                                 "id": "8"
                             },
-                            "size": 100
+                            "size": 119
                         },
                         {
                             "type": "branch",
@@ -64,35 +64,52 @@
                                                         "activeView": "rct-code-view",
                                                         "id": "10"
                                                     },
-                                                    "size": 556
+                                                    "size": 910
                                                 },
                                                 {
                                                     "type": "leaf",
                                                     "data": {
                                                         "views": [
-                                                            "rct-canvas"
+                                                            "rct-registers"
                                                         ],
-                                                        "activeView": "rct-canvas",
+                                                        "activeView": "rct-registers",
                                                         "id": "15"
                                                     },
-                                                    "size": 317
+                                                    "size": 261
                                                 }
                                             ],
-                                            "size": 438
+                                            "size": 573
                                         },
                                         {
-                                            "type": "leaf",
-                                            "data": {
-                                                "views": [
-                                                    "rct-breakpoints"
-                                                ],
-                                                "activeView": "rct-breakpoints",
-                                                "id": "6"
-                                            },
-                                            "size": 438
+                                            "type": "branch",
+                                            "data": [
+                                                {
+                                                    "type": "leaf",
+                                                    "data": {
+                                                        "views": [
+                                                            "registerTracer"
+                                                        ],
+                                                        "activeView": "registerTracer",
+                                                        "id": "5"
+                                                    },
+                                                    "size": 844
+                                                },
+                                                {
+                                                    "type": "leaf",
+                                                    "data": {
+                                                        "views": [
+                                                            "rct-breakpoints"
+                                                        ],
+                                                        "activeView": "rct-breakpoints",
+                                                        "id": "6"
+                                                    },
+                                                    "size": 327
+                                                }
+                                            ],
+                                            "size": 468
                                         }
                                     ],
-                                    "size": 873
+                                    "size": 1171
                                 },
                                 {
                                     "type": "branch",
@@ -106,7 +123,7 @@
                                                 "activeView": "rct-memory",
                                                 "id": "11"
                                             },
-                                            "size": 438
+                                            "size": 521
                                         },
                                         {
                                             "type": "leaf",
@@ -117,33 +134,22 @@
                                                 "activeView": "rct-stack",
                                                 "id": "14"
                                             },
-                                            "size": 438
+                                            "size": 520
                                         }
                                     ],
-                                    "size": 524
-                                },
-                                {
-                                    "type": "leaf",
-                                    "data": {
-                                        "views": [
-                                            "rct-registers"
-                                        ],
-                                        "activeView": "rct-registers",
-                                        "id": "12"
-                                    },
-                                    "size": 242
+                                    "size": 607
                                 }
                             ],
-                            "size": 876
+                            "size": 1041
                         }
                     ],
-                    "size": 1639
+                    "size": 1778
                 }
             ],
-            "size": 976
+            "size": 1160
         },
-        "width": 1982,
-        "height": 976,
+        "width": 2118,
+        "height": 1160,
         "orientation": "HORIZONTAL"
     },
     "panels": {
@@ -163,13 +169,13 @@
             },
             "title": "DTS Visualizer & AI"
         },
-        "registerTracer": {
-            "id": "registerTracer",
-            "contentComponent": "registerTracer",
+        "rct-canvas": {
+            "id": "rct-canvas",
+            "contentComponent": "rct-canvas",
             "params": {
-                "_componentName": "registerTracer"
+                "_componentName": "rct-canvas"
             },
-            "title": "Tracer"
+            "title": "RCT Core Canvas"
         },
         "rct-controller": {
             "id": "rct-controller",
@@ -187,13 +193,21 @@
             },
             "title": "RCT Code View"
         },
-        "rct-canvas": {
-            "id": "rct-canvas",
-            "contentComponent": "rct-canvas",
+        "rct-registers": {
+            "id": "rct-registers",
+            "contentComponent": "rct-registers",
             "params": {
-                "_componentName": "rct-canvas"
+                "_componentName": "rct-registers"
             },
-            "title": "RCT Core Canvas"
+            "title": "RCT Registers & Flags"
+        },
+        "registerTracer": {
+            "id": "registerTracer",
+            "contentComponent": "registerTracer",
+            "params": {
+                "_componentName": "registerTracer"
+            },
+            "title": "Tracer"
         },
         "rct-breakpoints": {
             "id": "rct-breakpoints",
@@ -218,15 +232,21 @@
                 "_componentName": "rct-stack"
             },
             "title": "RCT Stack"
-        },
-        "rct-registers": {
-            "id": "rct-registers",
-            "contentComponent": "rct-registers",
-            "params": {
-                "_componentName": "rct-registers"
-            },
-            "title": "RCT Registers & Flags"
         }
     },
-    "activeGroup": "8"
+    "activeGroup": "1",
+    "_fbb_pane_state": {
+        "tracer": {
+            "selectedGroup": "ALL",
+            "mode": "signed",
+            "timebaseSpan": "all"
+        },
+        "monitor": {
+            "expandedDevices": {
+                "vfpga_z80": true
+            },
+            "expandedGroups": {}
+        },
+        "hiddenTraceKeys": {}
+    }
 }

@@ -857,6 +857,9 @@ export default function RctCodeViewPane() {
 
     React.createElement('div', { style: S.header },
       React.createElement('span', null, 'Disassembly View'),
+      state.isTimeTraveling && React.createElement('span', {
+        style: { background: '#f59e0b', color: '#000', padding: '1px 6px', borderRadius: '3px', fontSize: '10px', fontWeight: 'bold' }
+      }, '⏱ TIME-TRAVEL'),
       React.createElement('span', { style: { color: '#38bdf8', fontFamily: 'monospace' } }, `PC: 0x${currentPc}`)
     ),
 

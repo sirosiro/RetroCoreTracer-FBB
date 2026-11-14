@@ -12,6 +12,19 @@
 #define REG_STATUS 0x04
 #define REG_CMD    0x08
 #define REG_CYCLES 0x0C
+#define REG_PC     0x10
+#define REG_SP     0x14
+#define REG_AF     0x18
+#define REG_BC     0x1C
+#define REG_DE     0x20
+#define REG_HL     0x24
+#define REG_IX     0x28
+#define REG_IY     0x2C
+#define REG_FLAGS  0x30
+#define REG_AF_ALT 0x34
+#define REG_BC_ALT 0x38
+#define REG_DE_ALT 0x3C
+#define REG_HL_ALT 0x40
 
 int main(int argc, char *argv[]) {
     printf("[RetroCoreTracer-Scenario] Initializing Z80 Studio Scenario Firmware...\n");

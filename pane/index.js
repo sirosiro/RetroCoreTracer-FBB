@@ -76,6 +76,54 @@ export default function RetroCoreTracerPane() {
   }, []);
 
   const [currentPc, setCurrentPc] = useState('0000');
+  const [isTimeTraveling, setIsTimeTraveling] = useState(false);
+
+  // F-BB Core Dashboard Time-Travel Sync Channel
+  useEffect(() => {
+    if (typeof BroadcastChannel === 'undefined') return;
+    const fbbSync = new BroadcastChannel('fbb_dashboard_sync');
+    fbbSync.onmessage = (event) => {
+      const data = event.data;
+      if (!data) return;
+      if (data.type === 'SYNC_TIME_TRAVEL') {
+        const payload = data.payload || {};
+        if (payload && !payload.isLive) {
+          setIsTimeTraveling(true);
+          setIsRunning(false);
+          if (payload.snapshot) {
+            const snap = payload.snapshot;
+            const fmtHex16 = (v) => '0x' + (Number(v) & 0xFFFF).toString(16).padStart(4, '0').toUpperCase();
+            if (snap.vfpga_z80_PC !== undefined) {
+              const pcHex = (Number(snap.vfpga_z80_PC) & 0xFFFF).toString(16).padStart(4, '0').toUpperCase();
+              setCurrentPc(pcHex);
+              setRegs(r => ({ ...r, pc: '0x' + pcHex }));
+            }
+            if (snap.vfpga_z80_SP !== undefined) setRegs(r => ({ ...r, sp: fmtHex16(snap.vfpga_z80_SP) }));
+            if (snap.vfpga_z80_AF !== undefined) setRegs(r => ({ ...r, af: fmtHex16(snap.vfpga_z80_AF) }));
+            if (snap.vfpga_z80_BC !== undefined) setRegs(r => ({ ...r, bc: fmtHex16(snap.vfpga_z80_BC) }));
+            if (snap.vfpga_z80_DE !== undefined) setRegs(r => ({ ...r, de: fmtHex16(snap.vfpga_z80_DE) }));
+            if (snap.vfpga_z80_HL !== undefined) setRegs(r => ({ ...r, hl: fmtHex16(snap.vfpga_z80_HL) }));
+            if (snap.vfpga_z80_IX !== undefined) setRegs(r => ({ ...r, ix: fmtHex16(snap.vfpga_z80_IX) }));
+            if (snap.vfpga_z80_IY !== undefined) setRegs(r => ({ ...r, iy: fmtHex16(snap.vfpga_z80_IY) }));
+            if (snap.vfpga_z80_FLAGS !== undefined) {
+              const f = Number(snap.vfpga_z80_FLAGS) & 0xFF;
+              setFlags({
+                s: (f >> 7) & 1,
+                z: (f >> 6) & 1,
+                h: (f >> 4) & 1,
+                pv: (f >> 2) & 1,
+                n: (f >> 1) & 1,
+                c: f & 1
+              });
+            }
+          }
+        } else {
+          setIsTimeTraveling(false);
+        }
+      }
+    };
+    return () => fbbSync.close();
+  }, []);
 
   // スナップショット履歴 (タイムトラベル用)
   const historyRef = useRef([]);
@@ -109,8 +157,38 @@ export default function RetroCoreTracerPane() {
     return null;
   }, [breakpoints, bus]);
 
+  const syncMmioToFbb = useCallback((pcHex, regsObj, flagsObj, cycles, running) => {
+    if (isTimeTraveling) return; // TIME-TRAVEL中の変化は共有メモリ/履歴へ逆流させない
+    if (typeof window === 'undefined' || !window.FBB || !window.FBB.socket) return;
+    const flagsVal = (flagsObj.s << 7) | (flagsObj.z << 6) | (flagsObj.h << 4) | (flagsObj.pv << 2) | (flagsObj.n << 1) | flagsObj.c;
+    const parse16 = (v) => parseInt((v || '0').replace('0x', ''), 16) || 0;
+    window.FBB.socket.emit('mmio:write', {
+      deviceName: 'vfpga_z80',
+      registers: {
+        CTRL: 1,
+        STATUS: running ? 1 : 0,
+        CMD: 0,
+        CYCLES: cycles,
+        PC: parseInt(pcHex, 16) || 0,
+        SP: parse16(regsObj.sp),
+        AF: parse16(regsObj.af),
+        BC: parse16(regsObj.bc),
+        DE: parse16(regsObj.de),
+        HL: parse16(regsObj.hl),
+        IX: parse16(regsObj.ix),
+        IY: parse16(regsObj.iy),
+        FLAGS: flagsVal,
+        AF_ALT: parse16(regsObj.af_alt),
+        BC_ALT: parse16(regsObj.bc_alt),
+        DE_ALT: parse16(regsObj.de_alt),
+        HL_ALT: parse16(regsObj.hl_alt)
+      }
+    });
+  }, [isTimeTraveling]);
+
   // --- ステップ実行 (Forward) ---
   const handleStep = useCallback(() => {
+    if (isTimeTraveling) return;
     // 現在状態を履歴に保存
     historyRef.current.push({
       step: stepCount, cycles: cycleCount, regs: { ...regs }, flags: { ...flags },
@@ -161,14 +239,16 @@ export default function RetroCoreTracerPane() {
     }
 
     const fmt16 = (hi, lo) => '0x' + hi.toString(16).padStart(2, '0').toUpperCase() + lo.toString(16).padStart(2, '0').toUpperCase();
-    setRegs(r => ({
-      ...r,
+    const updatedRegs = {
+      ...regs,
       af: fmt16(rA, rF),
       bc: fmt16(rB, rC),
       de: fmt16(rD, rE),
       hl: fmt16(rH, rL),
       pc: '0x' + newPc
-    }));
+    };
+    setRegs(updatedRegs);
+    syncMmioToFbb(newPc, updatedRegs, flags, cycleCount + 4, isRunning);
 
     // バス光彩アクティブ化
     setBus({
@@ -188,41 +268,51 @@ export default function RetroCoreTracerPane() {
       setIsRunning(false);
       setHitBpId(hitBp.id);
       setStatusMsg(`BP HIT: 0x${newPc}`);
+    } else if (curItem && curItem.mnem === 'HALT') {
+      setIsRunning(false);
+      setStatusMsg('CPU HALTED');
     } else {
       setHitBpId(null);
       setStatusMsg(null);
     }
-  }, [currentPc, program, regs, flags, bus, stepCount, cycleCount, lastExecuted, checkBreakpoints]);
+  }, [currentPc, program, regs, flags, bus, stepCount, cycleCount, lastExecuted, checkBreakpoints, isTimeTraveling, isRunning, syncMmioToFbb]);
 
-  // --- バックステップ (Time-Travel Undo) ---
+  // --- バックステップ (Time-Travel Undo - Append-Only) ---
   const handleBackstep = useCallback(() => {
-    if (historyRef.current.length === 0) return;
+    if (isTimeTraveling || historyRef.current.length === 0) return;
     const prev = historyRef.current.pop();
-    setStepCount(prev.step);
-    setCycleCount(prev.cycles);
+    const newStep = stepCount + 1;
+    const newCycles = cycleCount + 4;
+    setStepCount(newStep);
+    setCycleCount(newCycles);
     setRegs(prev.regs);
     setFlags(prev.flags);
     setBus(prev.bus);
     setCurrentPc(prev.pc);
     setLastExecuted(prev.lastExecuted);
-  }, []);
+    syncMmioToFbb(prev.pc, prev.regs, prev.flags, newCycles, false);
+  }, [isTimeTraveling, historyRef, stepCount, cycleCount, syncMmioToFbb]);
 
   // --- リセット ---
   const handleReset = useCallback(() => {
+    if (isTimeTraveling) return;
     setIsRunning(false);
     setStepCount(0);
     setCycleCount(0);
     setCurrentPc('0000');
     setLastExecuted('NOP');
-    setRegs({
+    const resetRegs = {
       af: '0x0000', bc: '0x0000', de: '0x0000', hl: '0x0000',
       af_alt: '0x5500', bc_alt: '0x0000', de_alt: '0x0000', hl_alt: '0x0000',
       ix: '0x1234', iy: '0x0000', sp: '0x0000', pc: '0x0000',
       i: '0x00', r: '0x00', im: 0
-    });
-    setFlags({ s: 0, z: 0, h: 0, pv: 0, n: 0, c: 0 });
+    };
+    const resetFlags = { s: 0, z: 0, h: 0, pv: 0, n: 0, c: 0 };
+    setRegs(resetRegs);
+    setFlags(resetFlags);
     historyRef.current = [];
-  }, []);
+    syncMmioToFbb('0000', resetRegs, resetFlags, 0, false);
+  }, [isTimeTraveling, syncMmioToFbb]);
 
   // --- 連続実行タイマー ---
   useEffect(() => {
@@ -266,18 +356,19 @@ export default function RetroCoreTracerPane() {
       alignItems: 'center',
       gap: '8px'
     },
-    btn: (bg = '#2563eb') => ({
-      background: bg,
-      color: '#fff',
+    btn: (bg = '#2563eb', disabled = false) => ({
+      background: disabled ? '#334155' : bg,
+      color: disabled ? '#94a3b8' : '#fff',
       border: 'none',
       padding: '4px 10px',
       borderRadius: '4px',
       fontSize: '11px',
       fontWeight: 'bold',
-      cursor: 'pointer',
+      cursor: disabled ? 'not-allowed' : 'pointer',
       display: 'flex',
       alignItems: 'center',
-      gap: '4px'
+      gap: '4px',
+      opacity: disabled ? 0.6 : 1
     }),
     grid: {
       display: 'grid',
@@ -321,17 +412,29 @@ export default function RetroCoreTracerPane() {
 
     // 1. 上部ツールバー
     React.createElement('div', { style: S.toolbar },
-      React.createElement('button', { style: S.btn('#2563eb'), onClick: handleStep }, 'Step'),
       React.createElement('button', {
-        style: S.btn(isRunning ? '#dc2626' : '#16a34a'),
-        onClick: () => setIsRunning(!isRunning)
+        style: S.btn('#2563eb', isTimeTraveling),
+        onClick: handleStep,
+        disabled: isTimeTraveling
+      }, 'Step'),
+      React.createElement('button', {
+        style: S.btn(isRunning ? '#dc2626' : '#16a34a', isTimeTraveling),
+        onClick: () => !isTimeTraveling && setIsRunning(!isRunning),
+        disabled: isTimeTraveling
       }, isRunning ? 'Stop' : 'Run'),
-      React.createElement('button', { style: S.btn('#475569'), onClick: handleReset }, 'Reset'),
       React.createElement('button', {
-        style: S.btn(historyRef.current.length > 0 ? '#d97706' : '#334155'),
+        style: S.btn('#475569', isTimeTraveling),
+        onClick: handleReset,
+        disabled: isTimeTraveling
+      }, 'Reset'),
+      React.createElement('button', {
+        style: S.btn(historyRef.current.length > 0 && !isTimeTraveling ? '#d97706' : '#334155', isTimeTraveling || historyRef.current.length === 0),
         onClick: handleBackstep,
-        disabled: historyRef.current.length === 0
+        disabled: isTimeTraveling || historyRef.current.length === 0
       }, 'Backstep'),
+      isTimeTraveling && React.createElement('span', {
+        style: { background: '#f59e0b', color: '#000', padding: '2px 8px', borderRadius: '4px', fontSize: '11px', fontWeight: 'bold' }
+      }, '⏱ TIME-TRAVELING'),
       React.createElement('div', { style: { height: '16px', width: '1px', background: '#334155', margin: '0 4px' } }),
       React.createElement('span', { style: { color: '#94a3b8', fontSize: '11px' } }, 'Speed:'),
       React.createElement('input', {

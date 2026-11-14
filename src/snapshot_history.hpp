@@ -1,4 +1,4 @@
-// @intent:responsibility 不変 CPU スナップショットの保持、リングバッファ管理、および Undo / Redo タイムトラベル
+// @intent:responsibility 不変 CPU スナップショットの保持、リングバッファ管理、および非破壊・追記型タイムトラベル
 #pragma once
 
 #include <cstdint>
@@ -104,22 +104,34 @@ public:
         : max_capacity_(max_capacity) {}
 
     void push(const CpuSnapshot& snapshot) {
+        checkpoints_.push_back(snapshot);
+        if (checkpoints_.size() > max_capacity_) {
+            checkpoints_.pop_front();
+        }
         history_.push_back(snapshot);
-        if (history_.size() > max_capacity_) {
+        if (history_.size() > max_capacity_ * 2) {
             history_.pop_front();
         }
     }
 
     bool can_undo() const {
-        return history_.size() > 1;
+        return checkpoints_.size() > 1;
     }
 
-    CpuSnapshot undo() {
-        if (!can_undo()) {
-            return history_.empty() ? CpuSnapshot() : history_.back();
+    const CpuSnapshot& peek_undo_target() const {
+        static CpuSnapshot empty;
+        if (checkpoints_.size() <= 1) return empty;
+        return checkpoints_[checkpoints_.size() - 2];
+    }
+
+    void record_backstep(const CpuSnapshot& restored_snap) {
+        if (!checkpoints_.empty()) {
+            checkpoints_.pop_back(); // 直前の実行スナップショットをチェックポイントから除外
         }
-        history_.pop_back(); // 現在のステートを除去
-        return history_.back(); // 1つ前のステートを返す
+        history_.push_back(restored_snap); // 追記型タイムライン（履歴を破壊せず末尾へ追加）
+        if (history_.size() > max_capacity_ * 2) {
+            history_.pop_front();
+        }
     }
 
     const CpuSnapshot& current() const {
@@ -132,10 +144,12 @@ public:
     }
 
     void clear() {
+        checkpoints_.clear();
         history_.clear();
     }
 
 private:
     size_t max_capacity_;
-    std::deque<CpuSnapshot> history_;
+    std::deque<CpuSnapshot> checkpoints_; // 巻き戻し可能なチェックポイントスタック
+    std::deque<CpuSnapshot> history_;     // 追記型・単調増加の完全イベントタイムライン
 };

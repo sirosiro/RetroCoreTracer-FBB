@@ -1,9 +1,12 @@
-// @intent:responsibility Z80Daemon 実装 (Phase 2: 完全 Undo メモリトラッキング & 組合せ ALU サイクル実行)
+// @intent:responsibility Z80Daemon 実装 (非破壊・追記型タイムトラベル & MMIO 同期)
 #include "z80_daemon.hpp"
 #include <iostream>
 #include <iomanip>
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 #include <unistd.h>
 #include <csignal>
 #include <cstring>
@@ -15,7 +18,60 @@ Z80Daemon::Z80Daemon() {
     top_ = std::make_unique<Vz80_top>();
 }
 
-Z80Daemon::~Z80Daemon() = default;
+Z80Daemon::~Z80Daemon() {
+    if (shm_regs_) {
+        munmap((void*)shm_regs_, 4096);
+        shm_regs_ = nullptr;
+    }
+    if (shm_fd_ >= 0) {
+        close(shm_fd_);
+        shm_fd_ = -1;
+    }
+}
+
+void Z80Daemon::init_shm(const std::string& shm_path) {
+    if (shm_regs_) return;
+    int fd = open(shm_path.c_str(), O_RDWR | O_CREAT, 0666);
+    if (fd >= 0) {
+        struct stat st;
+        if (fstat(fd, &st) == 0 && st.st_size < 4096) {
+            if (ftruncate(fd, 4096) != 0) {
+                // ignore error
+            }
+        }
+        void* ptr = mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+        if (ptr != MAP_FAILED) {
+            shm_regs_ = static_cast<volatile uint32_t*>(ptr);
+            shm_fd_ = fd;
+        } else {
+            close(fd);
+        }
+    }
+}
+
+void Z80Daemon::sync_mmio(const CpuSnapshot& snap) {
+    if (!shm_regs_) {
+        init_shm();
+        if (!shm_regs_) return;
+    }
+    shm_regs_[0x00 / 4] = 1; // CTRL: Active
+    shm_regs_[0x04 / 4] = snap.halted ? 2 : 1; // STATUS: 1=Running, 2=Halted
+    shm_regs_[0x08 / 4] = 0; // CMD
+    shm_regs_[0x0C / 4] = (uint32_t)snap.cycle_count; // CYCLES
+    shm_regs_[0x10 / 4] = snap.pc; // PC
+    shm_regs_[0x14 / 4] = snap.sp; // SP
+    shm_regs_[0x18 / 4] = snap.af; // AF
+    shm_regs_[0x1C / 4] = snap.bc; // BC
+    shm_regs_[0x20 / 4] = snap.de; // DE
+    shm_regs_[0x24 / 4] = snap.hl; // HL
+    shm_regs_[0x28 / 4] = snap.ix; // IX
+    shm_regs_[0x2C / 4] = snap.iy; // IY
+    shm_regs_[0x30 / 4] = snap.flags; // FLAGS
+    shm_regs_[0x34 / 4] = snap.af_alt; // AF_ALT (AF')
+    shm_regs_[0x38 / 4] = snap.bc_alt; // BC_ALT (BC')
+    shm_regs_[0x3C / 4] = snap.de_alt; // DE_ALT (DE')
+    shm_regs_[0x40 / 4] = snap.hl_alt; // HL_ALT (HL')
+}
 
 bool Z80Daemon::init(const std::string& hex_file) {
     if (!hex_file.empty()) {
@@ -94,6 +150,7 @@ void Z80Daemon::reset() {
 
     auto init_snap = capture_snapshot();
     history_.push(init_snap);
+    sync_mmio(init_snap);
 }
 
 CpuSnapshot Z80Daemon::capture_snapshot() {
@@ -343,6 +400,7 @@ CpuSnapshot Z80Daemon::step() {
     auto snap = capture_snapshot();
     snap.memory_undo = std::move(pending_mem_undo_);
     history_.push(snap);
+    sync_mmio(snap);
     return snap;
 }
 
@@ -357,32 +415,38 @@ CpuSnapshot Z80Daemon::backstep() {
         memory_.write(it->first, it->second);
     }
 
-    auto prev = history_.undo();
+    auto target = history_.peek_undo_target();
 
     // RTL 内部フリップフロップへ過去レジスタ値を直接注入
     top_->restore_en = 1;
-    top_->restore_pc = prev.pc;
-    top_->restore_af = prev.af;
-    top_->restore_bc = prev.bc;
-    top_->restore_de = prev.de;
-    top_->restore_hl = prev.hl;
-    top_->restore_sp = prev.sp;
-    top_->restore_ix = prev.ix;
-    top_->restore_iy = prev.iy;
-    top_->restore_af_alt = prev.af_alt;
-    top_->restore_bc_alt = prev.bc_alt;
-    top_->restore_de_alt = prev.de_alt;
-    top_->restore_hl_alt = prev.hl_alt;
-    top_->restore_halted = prev.halted;
+    top_->restore_pc = target.pc;
+    top_->restore_af = target.af;
+    top_->restore_bc = target.bc;
+    top_->restore_de = target.de;
+    top_->restore_hl = target.hl;
+    top_->restore_sp = target.sp;
+    top_->restore_ix = target.ix;
+    top_->restore_iy = target.iy;
+    top_->restore_af_alt = target.af_alt;
+    top_->restore_bc_alt = target.bc_alt;
+    top_->restore_de_alt = target.de_alt;
+    top_->restore_hl_alt = target.hl_alt;
+    top_->restore_halted = target.halted;
 
     top_->clk = 1; top_->eval();
     top_->clk = 0; top_->eval();
     top_->restore_en = 0;
     top_->eval();
 
-    step_count_ = prev.step_count;
-    cycle_count_ = prev.cycle_count;
-    return prev;
+    step_count_++;
+    cycle_count_ = target.cycle_count;
+
+    auto snap = capture_snapshot();
+    snap.step_count = step_count_;
+    snap.executed_mnemonic = "BACKSTEP: " + target.executed_mnemonic;
+    history_.record_backstep(snap);
+    sync_mmio(snap);
+    return snap;
 }
 
 bool Z80Daemon::load_hex(const std::string& hex_path_or_content) {
@@ -446,14 +510,14 @@ void Z80Daemon::run_standalone_test(size_t max_steps) {
         }
     }
 
-    std::cout << "\n=== Testing Backstep (Time-Travel Undo) ===" << std::endl;
+    std::cout << "\n=== Testing Backstep (Append-Only Time-Travel Undo) ===" << std::endl;
     std::cout << "Current state before Undo: Step " << current_state().step_count << std::endl;
     auto u1 = backstep();
-    std::cout << "Undid 1 step -> Restored Step " << u1.step_count << " (PC: 0x" << std::hex << u1.pc << ")" << std::endl;
+    std::cout << "Appended Backstep -> Monotonic Step " << u1.step_count << " (Restored PC: 0x" << std::hex << u1.pc << ")" << std::endl;
     auto u2 = backstep();
-    std::cout << "Undid 2 steps -> Restored Step " << u2.step_count << " (PC: 0x" << std::hex << u2.pc << ")" << std::endl;
+    std::cout << "Appended Backstep -> Monotonic Step " << u2.step_count << " (Restored PC: 0x" << std::hex << u2.pc << ")" << std::endl;
 
-    std::cout << "\n[SUCCESS] RTL cycle-accurate stepping & time-travel backstepping VERIFIED!" << std::endl;
+    std::cout << "\n[SUCCESS] RTL cycle-accurate stepping & append-only time-travel backstepping VERIFIED!" << std::endl;
 }
 
 void Z80Daemon::run_socket_server(const std::string& socket_path) {

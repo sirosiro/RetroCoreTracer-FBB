@@ -3,7 +3,7 @@ export const minApiVersion = 1;
 
 function getRctStore() {
   if (typeof window === 'undefined') return null;
-  if (!window.__RCT_STORE__ || (window.__RCT_STORE__.version || 0) < 2) {
+  if (!window.__RCT_STORE__ || (window.__RCT_STORE__.version || 0) < 3) {
     const channel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('fbb_rct_sync') : null;
 
     // Disassembly with structured columns: Addr, Bytes, Label, Mnemonic, Dest, Src, Comment
@@ -40,6 +40,7 @@ function getRctStore() {
       stepCount: 0,
       cycleCount: 0,
       isRunning: false,
+      isTimeTraveling: false,
       clockSpeed: 500,
       zoom: 1.0,
       lastExecuted: 'NOP',
@@ -99,20 +100,97 @@ function getRctStore() {
 
     let runTimer = null;
 
+    // F-BB Core Dashboard Time-Travel Sync Channel
+    const fbbSyncChannel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('fbb_dashboard_sync') : null;
+    if (fbbSyncChannel) {
+      fbbSyncChannel.onmessage = (event) => {
+        const { type, payload } = event.data || {};
+        if (type === 'SYNC_TIME_TRAVEL') {
+          if (payload && !payload.isLive) {
+            state.isTimeTraveling = true;
+            state.isRunning = false;
+            if (runTimer) { clearInterval(runTimer); runTimer = null; }
+            if (payload.snapshot) {
+              const snap = payload.snapshot;
+              const fmtHex16 = (v) => '0x' + (Number(v) & 0xFFFF).toString(16).padStart(4, '0').toUpperCase();
+              if (snap.vfpga_z80_PC !== undefined) {
+                const pcHex = (Number(snap.vfpga_z80_PC) & 0xFFFF).toString(16).padStart(4, '0').toUpperCase();
+                state.currentPc = pcHex;
+                state.regs.pc = '0x' + pcHex;
+              }
+              if (snap.vfpga_z80_SP !== undefined) state.regs.sp = fmtHex16(snap.vfpga_z80_SP);
+              if (snap.vfpga_z80_AF !== undefined) state.regs.af = fmtHex16(snap.vfpga_z80_AF);
+              if (snap.vfpga_z80_BC !== undefined) state.regs.bc = fmtHex16(snap.vfpga_z80_BC);
+              if (snap.vfpga_z80_DE !== undefined) state.regs.de = fmtHex16(snap.vfpga_z80_DE);
+              if (snap.vfpga_z80_HL !== undefined) state.regs.hl = fmtHex16(snap.vfpga_z80_HL);
+              if (snap.vfpga_z80_IX !== undefined) state.regs.ix = fmtHex16(snap.vfpga_z80_IX);
+              if (snap.vfpga_z80_IY !== undefined) state.regs.iy = fmtHex16(snap.vfpga_z80_IY);
+              if (snap.vfpga_z80_FLAGS !== undefined) {
+                const f = Number(snap.vfpga_z80_FLAGS) & 0xFF;
+                state.flags = {
+                  s: (f >> 7) & 1,
+                  z: (f >> 6) & 1,
+                  h: (f >> 4) & 1,
+                  pv: (f >> 2) & 1,
+                  n: (f >> 1) & 1,
+                  c: f & 1
+                };
+              }
+            }
+          } else {
+            state.isTimeTraveling = false;
+          }
+          notify('fbb_sync');
+        }
+      };
+    }
+
+    function syncMmioToFbb() {
+      if (state.isTimeTraveling) return; // TIME-TRAVEL中の変化は共有メモリ/履歴へ逆流させない
+      if (typeof window === 'undefined' || !window.FBB || !window.FBB.socket) return;
+      const flagsVal = (state.flags.s << 7) | (state.flags.z << 6) | (state.flags.h << 4) | (state.flags.pv << 2) | (state.flags.n << 1) | state.flags.c;
+      const parse16 = (v) => parseInt((v || '0').replace('0x', ''), 16) || 0;
+      window.FBB.socket.emit('mmio:write', {
+        deviceName: 'vfpga_z80',
+        registers: {
+          CTRL: 1,
+          STATUS: state.isRunning ? 1 : 0,
+          CMD: 0,
+          CYCLES: state.cycleCount,
+          PC: parseInt(state.currentPc, 16) || 0,
+          SP: getSp(),
+          AF: parse16(state.regs.af),
+          BC: parse16(state.regs.bc),
+          DE: parse16(state.regs.de),
+          HL: parse16(state.regs.hl),
+          IX: parse16(state.regs.ix),
+          IY: parse16(state.regs.iy),
+          FLAGS: flagsVal,
+          AF_ALT: parse16(state.regs.af_alt),
+          BC_ALT: parse16(state.regs.bc_alt),
+          DE_ALT: parse16(state.regs.de_alt),
+          HL_ALT: parse16(state.regs.hl_alt)
+        }
+      });
+    }
+
     function notify(origin) {
       listeners.forEach(l => {
         try { l(state); } catch (e) { console.error(e); }
       });
-      if (origin === 'local' && channel) {
-        channel.postMessage({
-          type: 'SYNC_STATE',
-          payload: {
-            ...state,
-            memoryProg: Array.from(state.memory.slice(0, 512)),
-            memoryStack: Array.from(state.memory.slice(0xFF00, 0x10000)),
-            stackBase: 0xFF00
-          }
-        });
+      if (origin === 'local' && !state.isTimeTraveling) {
+        syncMmioToFbb();
+        if (channel) {
+          channel.postMessage({
+            type: 'SYNC_STATE',
+            payload: {
+              ...state,
+              memoryProg: Array.from(state.memory.slice(0, 512)),
+              memoryStack: Array.from(state.memory.slice(0xFF00, 0x10000)),
+              stackBase: 0xFF00
+            }
+          });
+        }
       }
     }
 
@@ -123,6 +201,8 @@ function getRctStore() {
 
     // Accurate Z80 Instruction Stepping Engine
     function step() {
+      if (state.isTimeTraveling) return;
+
       const memChanges = [];
       state.history.push({
         stepCount: state.stepCount,
@@ -284,7 +364,7 @@ function getRctStore() {
             shouldJump = !!state.flags.z;
             targetCandidate = d.replace(/^Z,\s*/i, '') || s;
           } else if (/^Z$/i.test(d)) {
-            shouldJump = !!state.flags.z;
+            shouldJump = !state.flags.z;
             targetCandidate = s;
           } else if (/^NC,\s*(.*)$/i.test(d)) {
             shouldJump = !state.flags.c;
@@ -350,7 +430,7 @@ function getRctStore() {
             shouldJump = !!state.flags.pv;
             targetCandidate = d.replace(/^PE,\s*/i, '') || s;
           } else if (/^PE$/i.test(d)) {
-            shouldJump = !!state.flags.pv;
+            shouldJump = !state.flags.pv;
             targetCandidate = s;
           } else if (/^P,\s*(.*)$/i.test(d)) {
             shouldJump = !state.flags.s;
@@ -542,6 +622,14 @@ function getRctStore() {
         } else if (curItem.mnem === 'HALT') {
           nextPcNum = pcNum;
           tCycles = 4;
+          if (state.isRunning) {
+            if (runTimer) {
+              clearInterval(runTimer);
+              runTimer = null;
+            }
+            state.isRunning = false;
+            state.statusMsg = 'CPU HALTED';
+          }
         }
       }
 
@@ -595,6 +683,7 @@ function getRctStore() {
     }
 
     function backstep() {
+      if (state.isTimeTraveling) return;
       if (state.history.length === 0) return;
       const prev = state.history.pop();
       if (prev.memChanges) {
@@ -648,6 +737,7 @@ function getRctStore() {
     }
 
     function setRunning(running) {
+      if (state.isTimeTraveling && running) return;
       state.isRunning = running;
       if (runTimer) {
         clearInterval(runTimer);
@@ -746,7 +836,7 @@ function getRctStore() {
     }
 
     window.__RCT_STORE__ = {
-      version: 2,
+      version: 3,
       _listeners: listeners,
       getState: () => state,
       subscribe: (fn) => {
@@ -819,18 +909,19 @@ const S = {
     display: 'flex',
     flexDirection: 'column'
   },
-  btn: (bg = '#2563eb') => ({
-    background: bg,
-    color: '#fff',
+  btn: (bg = '#2563eb', disabled = false) => ({
+    background: disabled ? '#334155' : bg,
+    color: disabled ? '#64748b' : '#fff',
     border: 'none',
     padding: '4px 10px',
     borderRadius: '4px',
     fontSize: '11px',
     fontWeight: 'bold',
-    cursor: 'pointer',
+    cursor: disabled ? 'not-allowed' : 'pointer',
     display: 'inline-flex',
     alignItems: 'center',
-    gap: '4px'
+    gap: '4px',
+    opacity: disabled ? 0.7 : 1
   })
 };
 
@@ -841,6 +932,7 @@ export default function RctControllerPane() {
   const [state, actions] = useRctStore();
 
   const isRunning = state.isRunning || false;
+  const isTimeTraveling = state.isTimeTraveling || false;
   const historyLen = (state.history || []).length;
 
   return React.createElement(
@@ -861,25 +953,42 @@ export default function RctControllerPane() {
       }
     },
     React.createElement('button', {
-      style: S.btn('#2563eb'),
-      onClick: actions.step
+      style: S.btn('#2563eb', isTimeTraveling),
+      onClick: isTimeTraveling ? undefined : actions.step,
+      disabled: isTimeTraveling
     }, 'Step'),
 
     React.createElement('button', {
-      style: S.btn(isRunning ? '#dc2626' : '#16a34a'),
-      onClick: () => actions.setRunning(!isRunning)
+      style: S.btn(isRunning ? '#dc2626' : '#16a34a', isTimeTraveling),
+      onClick: isTimeTraveling ? undefined : () => actions.setRunning(!isRunning),
+      disabled: isTimeTraveling
     }, isRunning ? 'Stop' : 'Run'),
 
     React.createElement('button', {
-      style: S.btn('#475569'),
-      onClick: actions.reset
+      style: S.btn('#475569', isTimeTraveling),
+      onClick: isTimeTraveling ? undefined : actions.reset,
+      disabled: isTimeTraveling
     }, 'Reset'),
 
     React.createElement('button', {
-      style: S.btn(historyLen > 0 ? '#d97706' : '#334155'),
-      onClick: actions.backstep,
-      disabled: historyLen === 0
+      style: S.btn(historyLen > 0 ? '#d97706' : '#334155', isTimeTraveling || historyLen === 0),
+      onClick: (isTimeTraveling || historyLen === 0) ? undefined : actions.backstep,
+      disabled: isTimeTraveling || historyLen === 0
     }, 'Backstep'),
+
+    isTimeTraveling ? React.createElement('span', {
+      style: {
+        background: '#f59e0b',
+        color: '#000',
+        fontWeight: 'bold',
+        padding: '2px 8px',
+        borderRadius: '4px',
+        fontSize: '11px',
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: '4px'
+      }
+    }, '⏱ TIME-TRAVELING') : null,
 
     React.createElement('div', { style: { height: '16px', width: '1px', background: '#334155', margin: '0 4px' } }),
 
@@ -891,6 +1000,7 @@ export default function RctControllerPane() {
       step: '50',
       value: state.clockSpeed || 500,
       onChange: e => actions.setClockSpeed(Number(e.target.value)),
+      disabled: isTimeTraveling,
       style: { width: '80px', accentColor: '#38bdf8' }
     }),
     React.createElement('span', { style: { color: '#64748b', fontSize: '10px' } }, `${state.clockSpeed || 500}ms`),
