@@ -3,7 +3,7 @@ export const minApiVersion = 1;
 
 function getRctStore() {
   if (typeof window === 'undefined') return null;
-  if (!window.__RCT_STORE__ || (window.__RCT_STORE__.version || 0) < 3) {
+  if (!window.__RCT_STORE__ || (window.__RCT_STORE__.version || 0) < 4) {
     const channel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('fbb_rct_sync') : null;
 
     // Disassembly with structured columns: Addr, Bytes, Label, Mnemonic, Dest, Src, Comment
@@ -216,7 +216,7 @@ function getRctStore() {
       });
 
       const pcNum = parseInt(state.currentPc, 16);
-      const curItem = state.program.find(p => parseInt(p.addr, 16) === pcNum) || state.program[0];
+      const curItem = state.program.find(p => p.bytes && parseInt(p.addr, 16) === pcNum) || state.program.find(p => parseInt(p.addr, 16) === pcNum) || state.program[0];
 
       let rA = parseInt(state.regs.af.substring(2, 4), 16) || 0;
       let rF = parseInt(state.regs.af.substring(4, 6), 16) || 0;
@@ -236,13 +236,23 @@ function getRctStore() {
       state.lastOpType = curItem ? curItem.mnem : 'NOP';
       state.lastOpDesc = null;
 
+      const parseVal = (str) => {
+        if (!str) return NaN;
+        const s = str.trim();
+        if (s.startsWith('$')) return parseInt(s.replace('$', '0x'), 16);
+        if (/^0x[0-9a-fA-F]+$/i.test(s)) return parseInt(s, 16);
+        if (/^[0-9a-fA-F]+[hH]$/i.test(s)) return parseInt(s.slice(0, -1), 16);
+        if (/^\d+$/.test(s)) return parseInt(s, 10);
+        return NaN;
+      };
+
       const resolveJumpTarget = (item, candidate) => {
         const candidates = [candidate, item && item.dest, item && item.src].filter(Boolean);
         for (let cand of candidates) {
           const cleaned = cand.replace('$', '').replace('(', '').replace(')', '').replace(',', '').trim();
           // 1. Try finding by label in program
           const match = state.program.find(p => {
-            if (!p.label) return false;
+            if (!p.label || !p.addr) return false;
             const l = p.label.replace(':', '').trim();
             return l.toLowerCase() === cleaned.toLowerCase();
           });
@@ -251,6 +261,8 @@ function getRctStore() {
             if (!isNaN(a)) return a;
           }
           // 2. Try hex address (e.g. 0005, 0x0005, $0005)
+          const immA = parseVal(cleaned);
+          if (!isNaN(immA)) return immA;
           if (/^(0x)?[0-9a-fA-F]{1,4}$/i.test(cleaned)) {
             const a = parseInt(cleaned.replace(/^0x/i, ''), 16);
             if (!isNaN(a)) return a;
@@ -274,8 +286,9 @@ function getRctStore() {
           const dest = curItem.dest.replace(',', '').trim();
           const src = curItem.src.trim();
           let srcVal = 0;
-          if (src.startsWith('$')) {
-            srcVal = parseInt(src.replace('$', '0x'), 16);
+          const imm = parseVal(src);
+          if (!isNaN(imm)) {
+            srcVal = imm;
             tCycles = dest.length === 2 ? 10 : 7;
           } else if (src === 'A') srcVal = rA;
           else if (src === 'B') srcVal = rB;
@@ -331,12 +344,15 @@ function getRctStore() {
         } else if (curItem.mnem === 'ADD') {
           const src = curItem.src.trim();
           let srcVal = 0;
-          if (src === 'B') srcVal = rB;
+          const imm = parseVal(src);
+          if (!isNaN(imm)) srcVal = imm;
+          else if (src === 'B') srcVal = rB;
           else if (src === 'C') srcVal = rC;
           else if (src === 'D') srcVal = rD;
           else if (src === 'E') srcVal = rE;
+          else if (src === 'H') srcVal = rH;
+          else if (src === 'L') srcVal = rL;
           else if (src === 'A') srcVal = rA;
-          else if (src.startsWith('$')) srcVal = parseInt(src.replace('$', '0x'), 16);
 
           const oldA = rA;
           const sum = rA + srcVal;
@@ -353,14 +369,15 @@ function getRctStore() {
         } else if (curItem.mnem === 'SUB') {
           const operand = (curItem.dest || curItem.src || '').replace(',', '').trim();
           let srcVal = 0;
-          if (operand === 'B') srcVal = rB;
+          const imm = parseVal(operand);
+          if (!isNaN(imm)) srcVal = imm;
+          else if (operand === 'B') srcVal = rB;
           else if (operand === 'C') srcVal = rC;
           else if (operand === 'D') srcVal = rD;
           else if (operand === 'E') srcVal = rE;
           else if (operand === 'H') srcVal = rH;
           else if (operand === 'L') srcVal = rL;
           else if (operand === 'A') srcVal = rA;
-          else if (operand.startsWith('$')) srcVal = parseInt(operand.replace('$', '0x'), 16);
 
           const oldA = rA;
           const diff = rA - srcVal;
@@ -904,7 +921,7 @@ function getRctStore() {
     }
 
     window.__RCT_STORE__ = {
-      version: 3,
+      version: 4,
       _listeners: listeners,
       getState: () => state,
       subscribe: (fn) => {

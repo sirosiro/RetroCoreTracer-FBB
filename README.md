@@ -2,7 +2,7 @@
 
 **RetroCoreTracer-FBB** は、[FPGA-BoardlessBench (F-BB)](https://github.com/sirosiro/FPGA-BoardlessBench) の **PPA 5.1 (Peripheral Plugin Architecture)** および **DPPA v1.0 (Dashboard Pane Plugin Architecture)** を実証・ドッグフーディングするために開発された、外部独立型の Z80 CPU RTL ビジュアルトレーサー＆スタジオプラグインです。
 
-クリーンルーム（完全スクラッチ）から設計された Verilog-2001 Z80 CPU コア、C++ サイクルシミュレータ、決定論的タイムトラベル（Undo / Backstepping）エンジン、動的 Intel HEX デコーダ、および Dockview に自由に配置可能な 7 個の独立した動的 UI ペイン（DPPA）を提供します。F-BB 本体のコードを 1 行も変更することなく、完全なプラグアンドプレイを実現しています。
+クリーンルーム（完全スクラッチ）から設計された Verilog-2001 Z80 CPU コア、C++ サイクルシミュレータ、決定論的タイムトラベル（Undo / Backstepping）エンジン、Z80 アセンブラ (`.asm`) 直接読込＆リスティング連動 Code View エンジン、動的 Intel HEX デコーダ、および Dockview に自由に配置可能な 7 個の独立した動的 UI ペイン（DPPA）を提供します。F-BB 本体のコードを 1 行も変更することなく、完全なプラグアンドプレイを実現しています。
 
 ![RetroCoreTracer for F-BB AroundView Dashboard](assets/dashboard.gif)
 
@@ -32,8 +32,13 @@
    - **RCT Memory Map & Hex Viewer**: 64KB メモリアドレス空間の領域別カラービジュアライザおよびリアルタイム Hex / ASCII ダンプビュー。
    - **RCT Breakpoints**: PC アドレス一致（PC_MATCH）等のブレークポイント登録・管理・ヒット時自動停止。
 
-5. **高精度 Z80 命令ステッピング＆動的 HEX 解析エンジン**:
-   - `scripts/hex_to_program.py` により、任意の Intel HEX ファイルから直接 16 ビットアドレス、オペコードバイト列、ニーモニック、分岐オフセットを自動デコード。
+5. **Z80 アセンブラソース (`.asm`) 直接読込＆リスティング連動 Code View (コメント・設計意図の完全保持)**:
+   - `fbb lab scenario/ my_code.asm` や `./start_lab.sh` に Z80 アセンブラソース (`.asm`) を直接指定して即時実行可能。
+   - オープンソースの高速 Z80 クロスアセンブラ `z80asm`（または `pasmo`）と自動連携し、1 パスでシミュレータ用 Intel HEX (`/tmp/rct_active.hex`) とリッチな構造化プログラム JSON (`/tmp/rct_active_program.json`) を同時生成。
+   - 従来の「HEX 逆アセンブル」では消失していたブロック設計メモ、行コメント（`; ...`）、空行、ラベル定義を Code View 上に完全再現。コメント行はイタリック・グレー表示で全幅結合し、コードリーディング性を大幅に向上。
+   - `INCLUDE "other.asm"` による複数ファイル分割・モジュール構成にも完全対応（リスティング出力の `# File ...` ヘッダー境界を自動認識し、ファイルセパレーターとして UI 描画）。
+   - ラベル定義行やコメント行がステップ実行やジャンプ先の計算に干渉しない非同期パース構造を採用。
+   - 従来の `.hex` 指定時も自動で構造化逆アセンブラ (`scripts/hex_to_program.py`) が起動する 100% の後方互換性を保証。
    - ラベル優先検索・16進絶対アドレスパース・相対オフセット厳密計算 `(PC + 命令長 + offset) & 0xFFFF` を備えた高精度分岐エンジン（`JR`, `JP`, `DJNZ`, `CALL`, `RET`）。
    - スタック操作（`PUSH`, `POP`）および ALU 演算（`ADD`, `SUB`, `INC`, `DEC`）の完全なフラグ・レジスタ連動。
 
@@ -70,7 +75,8 @@ graph TD
     subgraph Layer3 ["第3層: DPPA 動的 UI ペイン (panes/ & pane/)"]
         PANE_JSON["pane.json (x7)"]
         UI_ESM["7 Independent Panes + BroadcastChannel Sync"]
-        DISASM["hex_to_program.py (HEX -> JSON)"]
+        ASM["asm_to_program.py (z80asm Listing -> HEX + JSON)"]
+        DISASM["hex_to_program.py (HEX Fallback -> JSON)"]
     end
 
     subgraph Layer2 ["第2層: シミュレータ & ハーネス (src/)"]
@@ -89,8 +95,11 @@ graph TD
 
     DTS -->|Gen VFPGA| FW
     FW -->|SHM / UIO| DAEMON
-    RUN -->|Invokes| DISASM
-    DISASM -->|Active Program JSON| UI_ESM
+    RUN -->|ASM Direct Load| ASM
+    RUN -->|HEX Fallback| DISASM
+    ASM -->|Active Program JSON + Comments| UI_ESM
+    ASM -->|Active Intel HEX| DAEMON
+    DISASM -->|Disassembled JSON| UI_ESM
     UI_ESM -->|JSON-RPC / WebBridge| DAEMON
     DAEMON -->|Verilator C++| TOP
     TOP --> ALU
@@ -100,7 +109,7 @@ graph TD
 
 - **第1層: ハードウェア RTL 層 (`rtl/`)**: Verilog-2001 準拠の Z80 プロセッサコア。Verilator によるサイクル精度シミュレーションを前提に最適化。
 - **第2層: シミュレータ＆ハーネス層 (`src/`)**: 64KB RAM、Intel HEX パーサ、スナップショット履歴バッファ、UNIX ソケット / JSON-RPC 通信デーモン。
-- **第3層: DPPA 動的ペイン層 (`panes/`, `pane/`, `scripts/`)**: F-BB ダッシュボードの Dockview にホットマウントされる React ESM コンポーネント群（7 分割ペイン＋統合ペイン）および動的逆アセンブルスクリプト。
+- **第3層: DPPA 動的ペイン層 (`panes/`, `pane/`, `scripts/`)**: F-BB ダッシュボードの Dockview にホットマウントされる React ESM コンポーネント群（7 分割ペイン＋統合ペイン）、Z80 アセンブラリスティング連動パーサ (`asm_to_program.py`)、および動的逆アセンブルスクリプト (`hex_to_program.py`)。
 - **第4層: 外部検証シナリオ層 (`scenario/`)**: F-BB の GTR/DTS (`config.gtr` / `config.dts`)、C-Shim、UIO ドライバと連携するエンドツーエンド検証環境。
 
 ---
@@ -137,7 +146,8 @@ RetroCoreTracer-FBB/
 │   ├── pane.json               # 統合ペインメタデータマニフェスト
 │   └── index.js                # 統合スタジオ UI (ESM React)
 ├── scripts/                    # ユーティリティスクリプト
-│   └── hex_to_program.py       # Intel HEX 構造化逆アセンブラ & JSON 生成
+│   ├── asm_to_program.py       # Z80 アセンブラ (.asm) リスティング連動パーサ & HEX/JSON 生成
+│   └── hex_to_program.py       # Intel HEX 構造化逆アセンブラ & JSON 生成 (フォールバック用)
 ├── scenario/                   # F-BB 外部検証テストシナリオ
 │   ├── config.gtr              # GTR (Z80 UIO 17仮想レジスタ・サブグループ定義)
 │   ├── config.dts              # Device Tree (Z80 UIO & UART 標準ノード定義)
@@ -146,7 +156,8 @@ RetroCoreTracer-FBB/
 │   ├── CMakeLists.txt          # シナリオビルド設定
 │   ├── run.sh                  # シナリオ起動ランナースクリプト
 │   └── vfpga_device_config.h   # IntelliSense / clangd 用事前生成ヘッダー
-└── examples/                   # テスト用 Z80 プログラム群 (Intel HEX)
+└── examples/                   # テスト用 Z80 プログラム群 (ASM / Intel HEX)
+    ├── fibonacci.asm           # フィボナッチ数列計算デモ アセンブラソース (設計メモ・コメント付き)
     ├── fibonacci.hex           # フィボナッチ数列計算デモ (ループ・相対ジャンプ)
     ├── z80_loop_test.hex       # DJNZ ループカウンタ検証テスト
     ├── z80_stack_test.hex      # PUSH/POP/CALL/RET スタック呼出検証テスト
@@ -165,21 +176,22 @@ RetroCoreTracer-FBB/
 -----------------------------------------------------------------------------------
 Language                         files          blank        comment           code
 -----------------------------------------------------------------------------------
-JavaScript                           8            530            122           7052
+JavaScript                           8            532            122           7271
 Verilog-SystemVerilog                4            274            128           2518
-Python                               3             74             52           1107
+Python                               4            112             80           1353
 C++                                  2             52             12            577
-Markdown                             4            113              0            481
-JSON                                10              0              0            395
+Markdown                             4            119              0            515
+JSON                                10              0              0            419
 C/C++ Header                         5             48             11            285
-Bourne Shell                         1             10              6             67
+Bourne Shell                         1             11              6            101
 CMake                                2             11              0             60
 C                                    1             11              1             59
+Assembly                             1              4             10             12
 -----------------------------------------------------------------------------------
-SUM:                                40           1123            332          12601
+SUM:                                42           1174            370          13170
 -----------------------------------------------------------------------------------
 ```
-*(ドキュメント Markdown 等を含む総行数は 14,056 行)*
+*(ドキュメント Markdown 等を含む総行数は 14,714 行)*
 
 ---
 
@@ -234,18 +246,31 @@ bin/fbb test ../RetroCoreTracer-FBB/scenario/
 ```
 
 ### 5. Web ダッシュボードによるインタラクティブ実行
-統合ランナーを起動し、ブラウザからビジュアルトレーサーを使用します。`start_lab.sh` の第2引数に対象の `.hex` ファイルを指定することで、任意の Z80 プログラムを Code View およびシミュレータへ即時ロードして実行可能です。
+統合ランナーを起動し、ブラウザからビジュアルトレーサーを使用します。`fbb lab` または `start_lab.sh` の引数に対象の `.asm`（Z80 アセンブラソース）または `.hex`（Intel HEX）ファイルを指定することで、任意の Z80 プログラムを Code View およびシミュレータへ即時ロードして実行可能です。
 
 ```bash
-# 1. 任意の HEX ファイル（ループテスト）を指定して起動
-./start_lab.sh ../RetroCoreTracer-FBB/scenario/ examples/z80_loop_test.hex
+# 1. Z80 アセンブラソース (.asm) を直接指定して起動 (コメントや設計メモを保持したリッチ Code View)
+fbb lab scenario/ examples/fibonacci.asm
+# または
+./start_lab.sh ../RetroCoreTracer-FBB/scenario/ examples/fibonacci.asm
 
-# 2. スタック・サブルーチン呼出テストを指定して起動
-./start_lab.sh ../RetroCoreTracer-FBB/scenario/ examples/z80_stack_test.hex
+# 2. 任意の HEX ファイル（ループテスト）を指定して起動 (従来の HEX も完全サポート)
+fbb lab scenario/ examples/z80_loop_test.hex
 
-# 3. 引数を省略した場合は、デフォルトでフィボナッチ数列デモ (fibonacci.hex) が起動します
-./start_lab.sh ../RetroCoreTracer-FBB/scenario/
+# 3. スタック・サブルーチン呼出テストを指定して起動
+fbb lab scenario/ examples/z80_stack_test.hex
+
+# 4. 引数を省略した場合は、デフォルトでフィボナッチ数列デモ (examples/fibonacci.asm) が自動アセンブル・起動します
+fbb lab scenario/
 ```
+
+#### Z80 アセンブラ (`.asm`) 自動連携とリスティングモードのメリット
+- **オープンソース・クロスアセンブラの自動統合 & プラグイン自律型 JIT セットアップ**:
+  - ホスト上の `z80asm`（または `pasmo`）を自動検出し、実行時に 1 パスで Intel HEX とリスティング JSON を生成します。未インストールの環境であっても `scenario/run.sh` が自動検知して JIT（Just-In-Time）インストールを自律実行するため、F-BB 本体の Dockerfile を汚染することなく完全なプラグアンドプレイを実現します。
+- **コメント・設計メモの完全保持**:
+  - 従来の「HEX 逆アセンブル」では消失していたブロックコメント（`; ==================` など）、各命令のインラインコメント（`; loop counter` など）、および空行の構造がそのまま Code View に表示されます。
+- **マルチファイル・モジュール構成 (`INCLUDE`) の透過的展開**:
+  - 実践的なプロジェクトで `INCLUDE "tables.asm"` などのディレクティブを使用している場合でも、`z80asm` のリスティング展開機能により、ファイル境界（`# File ...`）を保ったまま 1 つのシームレスなプログラムビューとして統合表示されます。
 
 ブラウザで `http://localhost:8080` を開き、上部メニューの「Add-ons & Robotics」または「Custom Panes」から **RetroCoreTracer** の各ペイン（または統合スタジオペイン）を選択すると、Dockview 上にリッチスタジオ UI が展開され、指定したプログラムの逆アセンブラ行・レジスタ・スタック・メモリが自動同期されます。
 

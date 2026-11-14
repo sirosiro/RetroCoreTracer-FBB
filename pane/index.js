@@ -469,7 +469,25 @@ export default function RetroCoreTracerPane() {
             ),
             React.createElement('tbody', null,
               program.map((p, idx) => {
-                const isCur = p.addr === currentPc;
+                if (p.isComment) {
+                  return React.createElement('tr', {
+                    key: idx,
+                    style: { color: '#64748b', fontStyle: 'italic', background: 'transparent' }
+                  },
+                    React.createElement('td', { style: { padding: '2px 4px', color: '#475569' } }, ''),
+                    React.createElement('td', { colSpan: 2, style: { padding: '2px 4px' } }, p.comment || '')
+                  );
+                }
+                if (p.isLabel) {
+                  return React.createElement('tr', {
+                    key: idx,
+                    style: { background: 'transparent', color: '#38bdf8', fontWeight: 'bold' }
+                  },
+                    React.createElement('td', { style: { padding: '2px 4px', color: '#475569' } }, p.addr || ''),
+                    React.createElement('td', { colSpan: 2, style: { padding: '2px 4px' } }, p.label || '')
+                  );
+                }
+                const isCur = p.addr && p.addr === currentPc;
                 return React.createElement('tr', {
                   key: idx,
                   style: {
@@ -482,7 +500,7 @@ export default function RetroCoreTracerPane() {
                   React.createElement('td', { style: { padding: '3px 4px', color: '#94a3b8' } }, p.bytes),
                   React.createElement('td', { style: { padding: '3px 4px', fontWeight: isCur ? 'bold' : 'normal' } },
                     p.label ? React.createElement('span', { style: { color: '#38bdf8', marginRight: '4px' } }, p.label) : null,
-                    p.mnem
+                    p.mnem + (p.dest ? ' ' + p.dest : '') + (p.src ? ' ' + p.src : '')
                   )
                 );
               })

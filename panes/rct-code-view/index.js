@@ -878,7 +878,32 @@ export default function RctCodeViewPane() {
         ),
         React.createElement('tbody', null,
           program.map((p, idx) => {
-            const isCur = p.addr === currentPc;
+            if (p.isComment) {
+              const isHeader = p.comment && p.comment.includes('=====');
+              return React.createElement('tr', {
+                key: idx,
+                style: {
+                  background: isHeader ? '#1a2234' : 'transparent',
+                  color: isHeader ? '#38bdf8' : '#64748b',
+                  fontStyle: 'italic',
+                  fontWeight: isHeader ? 'bold' : 'normal',
+                  borderBottom: isHeader ? '1px solid #1e293b' : 'none'
+                }
+              },
+                React.createElement('td', { style: { padding: '2px 6px', color: '#475569' } }, ''),
+                React.createElement('td', { colSpan: 6, style: { padding: '2px 6px' } }, p.comment || '')
+              );
+            }
+            if (p.isLabel) {
+              return React.createElement('tr', {
+                key: idx,
+                style: { background: 'transparent', color: '#38bdf8', fontWeight: 'bold' }
+              },
+                React.createElement('td', { style: { padding: '3px 6px', color: '#475569' } }, p.addr || ''),
+                React.createElement('td', { colSpan: 6, style: { padding: '3px 6px' } }, p.label || '')
+              );
+            }
+            const isCur = p.addr && p.addr === currentPc;
             return React.createElement('tr', {
               key: idx,
               ref: isCur ? activeRowRef : null,

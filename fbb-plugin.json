@@ -10,6 +10,10 @@
       "cmd": "fbb test {PLUGIN_DIR}/scenario/"
     },
     {
+      "desc": "Launch Interactive Studio with Fibonacci ASM Source (Listing Mode)",
+      "cmd": "fbb lab {PLUGIN_DIR}/scenario/ examples/fibonacci.asm"
+    },
+    {
       "desc": "Launch Interactive Studio with Full ISA Showcase Demo",
       "cmd": "fbb lab {PLUGIN_DIR}/scenario/ examples/z80_test_07_full_isa_showcase.hex"
     },
