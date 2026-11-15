@@ -8,6 +8,7 @@ echo "  RetroCoreTracer Z80 Studio Scenario Runner"
 echo "=================================================="
 
 # Parse ASM or HEX file from arguments or environment variable
+ORIG_ARGS=("$@")
 INPUT_ARG=""
 for arg in "$@"; do
     if [[ "$arg" == *.asm ]] || [[ "$arg" == *.hex ]]; then
@@ -74,7 +75,10 @@ if [[ "$SRC_PATH" == *.asm ]]; then
     fi
 
     if [ -f "$PLUGIN_DIR/scripts/asm_to_program.py" ]; then
-        python3 "$PLUGIN_DIR/scripts/asm_to_program.py" "$SRC_PATH" "$HEX_PATH" "/tmp/rct_active_program.json"
+        if ! python3 "$PLUGIN_DIR/scripts/asm_to_program.py" "$SRC_PATH" "$HEX_PATH" "/tmp/rct_active_program.json"; then
+            echo "[Scenario Error] Failed to assemble $SRC_PATH"
+            exit 1
+        fi
     else
         echo "[Scenario Error] scripts/asm_to_program.py not found!"
         exit 1
@@ -110,7 +114,7 @@ else
     # Direct execution or standalone lab
     RUNNER="${FBB_ROOT:-$SCRIPT_DIR/../../FPGA-BoardlessBench}/tests/scenario_runner.sh"
     if [ -f "$RUNNER" ]; then
-        "$RUNNER" "$SCRIPT_DIR" "$@"
+        "$RUNNER" "$SCRIPT_DIR" "${ORIG_ARGS[@]}"
     else
         echo "[Scenario Error] F-BB scenario_runner.sh not found at: $RUNNER"
         exit 1

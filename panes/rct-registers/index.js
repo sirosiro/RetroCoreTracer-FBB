@@ -3,20 +3,23 @@ export const minApiVersion = 1;
 
 function getRctStore() {
   if (typeof window === 'undefined') return null;
-  if (!window.__RCT_STORE__ || (window.__RCT_STORE__.version || 0) < 4) {
+  if (!window.__RCT_STORE__ || (window.__RCT_STORE__.version || 0) < 7) {
+    if (typeof window !== 'undefined' && window.__RCT_STORE__ && window.__RCT_STORE__._channel) {
+      try { window.__RCT_STORE__._channel.close(); } catch (e) {}
+    }
     const channel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('fbb_rct_sync') : null;
 
     // Disassembly with structured columns: Addr, Bytes, Label, Mnemonic, Dest, Src, Comment
     const initialProgram = [
-      { addr: '0000', bytes: '00',    label: 'START:',    mnem: 'NOP',  dest: '',     src: '',     comment: '; Entry point' },
-      { addr: '0001', bytes: '3E 01', label: '',          mnem: 'LD',   dest: 'A,',   src: '$01',  comment: '; Set initial A = 1' },
-      { addr: '0003', bytes: '06 01', label: 'FIB_INIT:', mnem: 'LD',   dest: 'B,',   src: '$01',  comment: '; Set initial B = 1' },
-      { addr: '0005', bytes: '0E 00', label: '',          mnem: 'LD',   dest: 'C,',   src: '$00',  comment: '; Clear C = 0' },
-      { addr: '0007', bytes: '80',    label: 'LOOP:',     mnem: 'ADD',  dest: 'A,',   src: 'B',    comment: '; Fibonacci: A = A + B' },
-      { addr: '0008', bytes: '48',    label: '',          mnem: 'LD',   dest: 'C,',   src: 'B',    comment: '; Save previous B to C' },
-      { addr: '0009', bytes: '47',    label: '',          mnem: 'LD',   dest: 'B,',   src: 'A',    comment: '; Update B to new sum' },
-      { addr: '000A', bytes: '18 FB', label: '',          mnem: 'JR',   dest: 'LOOP', src: '(-5)', comment: '; Repeat loop' },
-      { addr: '000C', bytes: '76',    label: '',          mnem: 'HALT', dest: '',     src: '',     comment: '; Stop CPU execution' }
+      { addr: '0000', bytes: '00', label: 'START:', mnem: 'NOP', dest: '', src: '', comment: '; Entry point' },
+      { addr: '0001', bytes: '3E 01', label: '', mnem: 'LD', dest: 'A,', src: '$01', comment: '; Set initial A = 1' },
+      { addr: '0003', bytes: '06 01', label: 'FIB_INIT:', mnem: 'LD', dest: 'B,', src: '$01', comment: '; Set initial B = 1' },
+      { addr: '0005', bytes: '0E 00', label: '', mnem: 'LD', dest: 'C,', src: '$00', comment: '; Clear C = 0' },
+      { addr: '0007', bytes: '80', label: 'LOOP:', mnem: 'ADD', dest: 'A,', src: 'B', comment: '; Fibonacci: A = A + B' },
+      { addr: '0008', bytes: '48', label: '', mnem: 'LD', dest: 'C,', src: 'B', comment: '; Save previous B to C' },
+      { addr: '0009', bytes: '47', label: '', mnem: 'LD', dest: 'B,', src: 'A', comment: '; Update B to new sum' },
+      { addr: '000A', bytes: '18 FB', label: '', mnem: 'JR', dest: 'LOOP', src: '(-5)', comment: '; Repeat loop' },
+      { addr: '000C', bytes: '76', label: '', mnem: 'HALT', dest: '', src: '', comment: '; Stop CPU execution' }
     ];
 
     // 64KB memory array (65536 bytes)
@@ -80,7 +83,12 @@ function getRctStore() {
           if (data && data.program && data.program.length > 0) {
             loadedProgramData = data;
             state.program = data.program;
-            if (data.memory && data.memory.length > 0) {
+            if (data.memoryMap) {
+              for (const [addrStr, val] of Object.entries(data.memoryMap)) {
+                const a = parseInt(addrStr, 10);
+                if (!isNaN(a) && a >= 0 && a < 65536) state.memory[a] = val;
+              }
+            } else if (data.memory && data.memory.length > 0) {
               for (let i = 0; i < data.memory.length && i < 65536; i++) {
                 state.memory[i] = data.memory[i];
               }
@@ -95,7 +103,7 @@ function getRctStore() {
             notify('local');
           }
         })
-        .catch(() => {});
+        .catch(() => { });
     }
 
     let runTimer = null;
@@ -140,25 +148,56 @@ function getRctStore() {
           } else {
             state.isTimeTraveling = false;
           }
-          notify('local');
+          notify('fbb_sync');
         }
       };
+    }
+
+    function syncMmioToFbb() {
+      if (state.isTimeTraveling) return; // TIME-TRAVEL中の変化は共有メモリ/履歴へ逆流させない
+      if (typeof window === 'undefined' || !window.FBB || !window.FBB.socket) return;
+      const flagsVal = (state.flags.s << 7) | (state.flags.z << 6) | (state.flags.h << 4) | (state.flags.pv << 2) | (state.flags.n << 1) | state.flags.c;
+      const parse16 = (v) => parseInt((v || '0').replace('0x', ''), 16) || 0;
+      window.FBB.socket.emit('mmio:write', {
+        deviceName: 'vfpga_z80',
+        registers: {
+          CTRL: 1,
+          STATUS: state.isRunning ? 1 : 0,
+          CMD: 0,
+          CYCLES: state.cycleCount,
+          PC: parseInt(state.currentPc, 16) || 0,
+          SP: getSp(),
+          AF: parse16(state.regs.af),
+          BC: parse16(state.regs.bc),
+          DE: parse16(state.regs.de),
+          HL: parse16(state.regs.hl),
+          IX: parse16(state.regs.ix),
+          IY: parse16(state.regs.iy),
+          FLAGS: flagsVal,
+          AF_ALT: parse16(state.regs.af_alt),
+          BC_ALT: parse16(state.regs.bc_alt),
+          DE_ALT: parse16(state.regs.de_alt),
+          HL_ALT: parse16(state.regs.hl_alt)
+        }
+      });
     }
 
     function notify(origin) {
       listeners.forEach(l => {
         try { l(state); } catch (e) { console.error(e); }
       });
-      if (origin === 'local' && channel) {
-        channel.postMessage({
-          type: 'SYNC_STATE',
-          payload: {
-            ...state,
-            memoryProg: Array.from(state.memory.slice(0, 512)),
-            memoryStack: Array.from(state.memory.slice(0xFF00, 0x10000)),
-            stackBase: 0xFF00
-          }
-        });
+      if (origin === 'local' && !state.isTimeTraveling) {
+        syncMmioToFbb();
+        if (channel) {
+          const lastHist = state.history[state.history.length - 1];
+          channel.postMessage({
+            type: 'SYNC_STATE',
+            payload: {
+              ...state,
+              memChanges: lastHist ? lastHist.memChanges : []
+            }
+          });
+        }
       }
     }
 
@@ -214,6 +253,17 @@ function getRctStore() {
         return NaN;
       };
 
+      const getImmediateVal = (str, item) => {
+        let v = parseVal(str);
+        if (isNaN(v) && item && item.bytes) {
+          const b = item.bytes.trim().split(/\s+/).map(x => parseInt(x, 16)).filter(x => !isNaN(x));
+          if (b.length === 2) v = b[1];
+          else if (b.length === 3) v = b[1] | (b[2] << 8);
+          else if (b.length === 4) v = b[2] | (b[3] << 8);
+        }
+        return v;
+      };
+
       const resolveJumpTarget = (item, candidate) => {
         const candidates = [candidate, item && item.dest, item && item.src].filter(Boolean);
         for (let cand of candidates) {
@@ -254,10 +304,19 @@ function getRctStore() {
           const dest = curItem.dest.replace(',', '').trim();
           const src = curItem.src.trim();
           let srcVal = 0;
-          const imm = parseVal(src);
+          const imm = getImmediateVal(src, curItem);
           if (!isNaN(imm)) {
             srcVal = imm;
             tCycles = dest.length === 2 ? 10 : 7;
+          } else if (src === '(HL)') {
+            srcVal = state.memory[(rH << 8) | rL] || 0;
+            tCycles = 7;
+          } else if (src === '(DE)') {
+            srcVal = state.memory[(rD << 8) | rE] || 0;
+            tCycles = 7;
+          } else if (src === '(BC)') {
+            srcVal = state.memory[(rB << 8) | rC] || 0;
+            tCycles = 7;
           } else if (src === 'A') srcVal = rA;
           else if (src === 'B') srcVal = rB;
           else if (src === 'C') srcVal = rC;
@@ -276,7 +335,22 @@ function getRctStore() {
           else if (src === 'IYH') { const iy = parseInt(state.regs.iy.replace('0x', ''), 16) || 0; srcVal = (iy >> 8) & 0xFF; }
           else if (src === 'IYL') { const iy = parseInt(state.regs.iy.replace('0x', ''), 16) || 0; srcVal = iy & 0xFF; }
 
-          if (dest === 'A') rA = srcVal & 0xFF;
+          if (dest === '(HL)') {
+            const a = (rH << 8) | rL;
+            memChanges.push({ addr: a, oldVal: state.memory[a] || 0, newVal: srcVal & 0xFF });
+            state.memory[a] = srcVal & 0xFF;
+            tCycles = 7;
+          } else if (dest === '(DE)') {
+            const a = (rD << 8) | rE;
+            memChanges.push({ addr: a, oldVal: state.memory[a] || 0, newVal: srcVal & 0xFF });
+            state.memory[a] = srcVal & 0xFF;
+            tCycles = 7;
+          } else if (dest === '(BC)') {
+            const a = (rB << 8) | rC;
+            memChanges.push({ addr: a, oldVal: state.memory[a] || 0, newVal: srcVal & 0xFF });
+            state.memory[a] = srcVal & 0xFF;
+            tCycles = 7;
+          } else if (dest === 'A') rA = srcVal & 0xFF;
           else if (dest === 'B') rB = srcVal & 0xFF;
           else if (dest === 'C') rC = srcVal & 0xFF;
           else if (dest === 'D') rD = srcVal & 0xFF;
@@ -312,7 +386,7 @@ function getRctStore() {
         } else if (curItem.mnem === 'ADD') {
           const src = curItem.src.trim();
           let srcVal = 0;
-          const imm = parseVal(src);
+          const imm = getImmediateVal(src, curItem);
           if (!isNaN(imm)) srcVal = imm;
           else if (src === 'B') srcVal = rB;
           else if (src === 'C') srcVal = rC;
@@ -337,7 +411,7 @@ function getRctStore() {
         } else if (curItem.mnem === 'SUB') {
           const operand = (curItem.dest || curItem.src || '').replace(',', '').trim();
           let srcVal = 0;
-          const imm = parseVal(operand);
+          const imm = getImmediateVal(operand, curItem);
           if (!isNaN(imm)) srcVal = imm;
           else if (operand === 'B') srcVal = rB;
           else if (operand === 'C') srcVal = rC;
@@ -359,6 +433,144 @@ function getRctStore() {
           const pv = (((oldA ^ srcVal) & (oldA ^ rA)) & 0x80) ? 1 : 0;
           state.flags = { s, z, h, pv, n: 1, c };
           rF = (s << 7) | (z << 6) | (h << 4) | (pv << 2) | (1 << 1) | c;
+        } else if (curItem.mnem === 'SBC') {
+          tCycles = 15;
+          const dest = (curItem.dest || '').replace(',', '').trim();
+          const src = (curItem.src || '').trim();
+          if (dest === 'HL') {
+            const hl = (rH << 8) | rL;
+            let val = 0;
+            if (src === 'BC') val = (rB << 8) | rC;
+            else if (src === 'DE') val = (rD << 8) | rE;
+            else if (src === 'HL') val = hl;
+            else if (src === 'SP') val = getSp();
+            else val = getImmediateVal(src, curItem) || 0;
+            const cIn = state.flags.c ? 1 : 0;
+            const res = hl - val - cIn;
+            rH = ((res & 0xFFFF) >> 8) & 0xFF;
+            rL = res & 0xFF;
+            const s = (res & 0x8000) ? 1 : 0;
+            const z = ((res & 0xFFFF) === 0) ? 1 : 0;
+            const cOut = (res < 0) ? 1 : 0;
+            state.flags = { ...state.flags, s, z, n: 1, c: cOut };
+            rF = (s << 7) | (z << 6) | (1 << 1) | cOut;
+          } else {
+            let v = 0;
+            const op = src || dest;
+            if (op === '(HL)') v = state.memory[(rH << 8) | rL] || 0;
+            else if (op === 'B') v = rB;
+            else if (op === 'C') v = rC;
+            else if (op === 'D') v = rD;
+            else if (op === 'E') v = rE;
+            else if (op === 'H') v = rH;
+            else if (op === 'L') v = rL;
+            else v = getImmediateVal(op, curItem) || 0;
+            const cIn = state.flags.c ? 1 : 0;
+            const res = rA - v - cIn;
+            rA = (res < 0 ? res + 256 : res) & 0xFF;
+            const s = (rA & 0x80) ? 1 : 0;
+            const z = (rA === 0) ? 1 : 0;
+            const cOut = (res < 0) ? 1 : 0;
+            state.flags = { ...state.flags, s, z, n: 1, c: cOut };
+            rF = (s << 7) | (z << 6) | (1 << 1) | cOut;
+            tCycles = 4;
+          }
+        } else if (curItem.mnem === 'OR') {
+          tCycles = 4;
+          const op = (curItem.src || curItem.dest || '').replace(',', '').trim();
+          let v = 0;
+          if (op === '(HL)') v = state.memory[(rH << 8) | rL] || 0;
+          else if (op === 'A') v = rA;
+          else if (op === 'B') v = rB;
+          else if (op === 'C') v = rC;
+          else if (op === 'D') v = rD;
+          else if (op === 'E') v = rE;
+          else if (op === 'H') v = rH;
+          else if (op === 'L') v = rL;
+          else v = getImmediateVal(op, curItem) || 0;
+          rA = (rA | v) & 0xFF;
+          const s = (rA & 0x80) ? 1 : 0;
+          const z = (rA === 0) ? 1 : 0;
+          let p = 0; for (let i = 0; i < 8; i++) if ((rA >> i) & 1) p++;
+          const pv = (p % 2 === 0) ? 1 : 0;
+          state.flags = { s, z, h: 0, pv, n: 0, c: 0 };
+          rF = (s << 7) | (z << 6) | (pv << 2);
+        } else if (curItem.mnem === 'XOR') {
+          tCycles = 4;
+          const op = (curItem.src || curItem.dest || '').replace(',', '').trim();
+          let v = 0;
+          if (op === '(HL)') v = state.memory[(rH << 8) | rL] || 0;
+          else if (op === 'A') v = rA;
+          else if (op === 'B') v = rB;
+          else if (op === 'C') v = rC;
+          else if (op === 'D') v = rD;
+          else if (op === 'E') v = rE;
+          else if (op === 'H') v = rH;
+          else if (op === 'L') v = rL;
+          else v = getImmediateVal(op, curItem) || 0;
+          rA = (rA ^ v) & 0xFF;
+          const s = (rA & 0x80) ? 1 : 0;
+          const z = (rA === 0) ? 1 : 0;
+          let p = 0; for (let i = 0; i < 8; i++) if ((rA >> i) & 1) p++;
+          const pv = (p % 2 === 0) ? 1 : 0;
+          state.flags = { s, z, h: 0, pv, n: 0, c: 0 };
+          rF = (s << 7) | (z << 6) | (pv << 2);
+        } else if (curItem.mnem === 'AND') {
+          tCycles = 4;
+          const op = (curItem.src || curItem.dest || '').replace(',', '').trim();
+          let v = 0;
+          if (op === '(HL)') v = state.memory[(rH << 8) | rL] || 0;
+          else if (op === 'A') v = rA;
+          else if (op === 'B') v = rB;
+          else if (op === 'C') v = rC;
+          else if (op === 'D') v = rD;
+          else if (op === 'E') v = rE;
+          else if (op === 'H') v = rH;
+          else if (op === 'L') v = rL;
+          else v = getImmediateVal(op, curItem) || 0;
+          rA = (rA & v) & 0xFF;
+          const s = (rA & 0x80) ? 1 : 0;
+          const z = (rA === 0) ? 1 : 0;
+          let p = 0; for (let i = 0; i < 8; i++) if ((rA >> i) & 1) p++;
+          const pv = (p % 2 === 0) ? 1 : 0;
+          state.flags = { s, z, h: 1, pv, n: 0, c: 0 };
+          rF = (s << 7) | (z << 6) | (1 << 4) | (pv << 2);
+        } else if (curItem.mnem === 'CP') {
+          const op = (curItem.dest || curItem.src || '').replace(',', '').trim();
+          tCycles = (op === '(HL)') ? 7 : 4;
+          let v = 0;
+          if (op === '(HL)') v = state.memory[(rH << 8) | rL] || 0;
+          else if (op === 'A') v = rA;
+          else if (op === 'B') v = rB;
+          else if (op === 'C') v = rC;
+          else if (op === 'D') v = rD;
+          else if (op === 'E') v = rE;
+          else if (op === 'H') v = rH;
+          else if (op === 'L') v = rL;
+          else v = getImmediateVal(op, curItem) || 0;
+          const diff = rA - v;
+          const s = ((diff & 0xFF) & 0x80) ? 1 : 0;
+          const z = (rA === v) ? 1 : 0;
+          const c = (rA < v) ? 1 : 0;
+          const h = ((rA & 0x0F) < (v & 0x0F)) ? 1 : 0;
+          const pv = (((rA ^ v) & (rA ^ (diff & 0xFF))) & 0x80) ? 1 : 0;
+          state.flags = { s, z, h, pv, n: 1, c };
+          rF = (s << 7) | (z << 6) | (h << 4) | (pv << 2) | (1 << 1) | c;
+        } else if (curItem.mnem === 'EX') {
+          tCycles = 4;
+          const d = (curItem.dest || '').replace(',', '').trim();
+          const s = (curItem.src || '').trim();
+          if ((d === 'DE' && s === 'HL') || (d === 'HL' && s === 'DE')) {
+            const tH = rH, tL = rL;
+            rH = rD; rL = rE;
+            rD = tH; rE = tL;
+          } else if (d === "AF" || s === "AF'") {
+            const tA = rA, tF = rF;
+            const altAF = parseInt(state.regs.af_alt.replace('0x', ''), 16) || 0;
+            rA = (altAF >> 8) & 0xFF;
+            rF = altAF & 0xFF;
+            state.regs.af_alt = '0x' + ((tA << 8) | tF).toString(16).padStart(4, '0').toUpperCase();
+          }
         } else if (curItem.mnem === 'JR') {
           let shouldJump = true;
           let targetCandidate = '';
@@ -491,7 +703,19 @@ function getRctStore() {
           else if (dest === 'E') { rE = (rE + 1) & 0xFF; }
           else if (dest === 'H') { rH = (rH + 1) & 0xFF; }
           else if (dest === 'L') { rL = (rL + 1) & 0xFF; }
-          else if (dest === 'IXH') {
+          else if (dest === 'BC') { const v = (((rB << 8) | rC) + 1) & 0xFFFF; rB = (v >> 8) & 0xFF; rC = v & 0xFF; tCycles = 6; }
+          else if (dest === 'DE') { const v = (((rD << 8) | rE) + 1) & 0xFFFF; rD = (v >> 8) & 0xFF; rE = v & 0xFF; tCycles = 6; }
+          else if (dest === 'HL') { const v = (((rH << 8) | rL) + 1) & 0xFFFF; rH = (v >> 8) & 0xFF; rL = v & 0xFF; tCycles = 6; }
+          else if (dest === 'SP') { let sp = (getSp() + 1) & 0xFFFF; state.regs.sp = '0x' + sp.toString(16).padStart(4, '0').toUpperCase(); tCycles = 6; }
+          else if (dest === 'IX') { let ix = (parseInt(state.regs.ix.replace('0x', ''), 16) + 1) & 0xFFFF; state.regs.ix = '0x' + ix.toString(16).padStart(4, '0').toUpperCase(); tCycles = 10; }
+          else if (dest === 'IY') { let iy = (parseInt(state.regs.iy.replace('0x', ''), 16) + 1) & 0xFFFF; state.regs.iy = '0x' + iy.toString(16).padStart(4, '0').toUpperCase(); tCycles = 10; }
+          else if (dest === '(HL)') {
+            const a = (rH << 8) | rL;
+            const newVal = ((state.memory[a] || 0) + 1) & 0xFF;
+            memChanges.push({ addr: a, oldVal: state.memory[a] || 0, newVal });
+            state.memory[a] = newVal;
+            tCycles = 11;
+          } else if (dest === 'IXH') {
             let ix = parseInt(state.regs.ix.replace('0x', ''), 16) || 0;
             let val = ((ix >> 8) + 1) & 0xFF;
             state.regs.ix = '0x' + (((val & 0xFF) << 8) | (ix & 0xFF)).toString(16).padStart(4, '0').toUpperCase();
@@ -508,11 +732,13 @@ function getRctStore() {
             let val = ((iy & 0xFF) + 1) & 0xFF;
             state.regs.iy = '0x' + ((iy & 0xFF00) | (val & 0xFF)).toString(16).padStart(4, '0').toUpperCase();
           }
-          const val = dest === 'A' ? rA : (dest === 'B' ? rB : (dest === 'C' ? rC : (dest === 'D' ? rD : (dest === 'E' ? rE : (dest === 'H' ? rH : rL)))));
-          const z = (val & 0xFF) === 0 ? 1 : 0;
-          const s = (val & 0x80) ? 1 : 0;
-          state.flags = { ...state.flags, s, z };
-          tCycles = 4;
+          if (['A', 'B', 'C', 'D', 'E', 'H', 'L', '(HL)'].includes(dest)) {
+            const val = dest === '(HL)' ? state.memory[(rH << 8) | rL] : (dest === 'A' ? rA : (dest === 'B' ? rB : (dest === 'C' ? rC : (dest === 'D' ? rD : (dest === 'E' ? rE : (dest === 'H' ? rH : rL))))));
+            const z = (val & 0xFF) === 0 ? 1 : 0;
+            const s = (val & 0x80) ? 1 : 0;
+            state.flags = { ...state.flags, s, z };
+          }
+          tCycles = tCycles || 4;
         } else if (curItem.mnem === 'DEC') {
           const dest = curItem.dest.replace(',', '').trim();
           if (dest === 'A') { rA = (rA - 1) & 0xFF; }
@@ -522,7 +748,19 @@ function getRctStore() {
           else if (dest === 'E') { rE = (rE - 1) & 0xFF; }
           else if (dest === 'H') { rH = (rH - 1) & 0xFF; }
           else if (dest === 'L') { rL = (rL - 1) & 0xFF; }
-          else if (dest === 'IXH') {
+          else if (dest === 'BC') { const v = (((rB << 8) | rC) - 1) & 0xFFFF; rB = (v >> 8) & 0xFF; rC = v & 0xFF; tCycles = 6; }
+          else if (dest === 'DE') { const v = (((rD << 8) | rE) - 1) & 0xFFFF; rD = (v >> 8) & 0xFF; rE = v & 0xFF; tCycles = 6; }
+          else if (dest === 'HL') { const v = (((rH << 8) | rL) - 1) & 0xFFFF; rH = (v >> 8) & 0xFF; rL = v & 0xFF; tCycles = 6; }
+          else if (dest === 'SP') { let sp = (getSp() - 1) & 0xFFFF; state.regs.sp = '0x' + sp.toString(16).padStart(4, '0').toUpperCase(); tCycles = 6; }
+          else if (dest === 'IX') { let ix = (parseInt(state.regs.ix.replace('0x', ''), 16) - 1) & 0xFFFF; state.regs.ix = '0x' + ix.toString(16).padStart(4, '0').toUpperCase(); tCycles = 10; }
+          else if (dest === 'IY') { let iy = (parseInt(state.regs.iy.replace('0x', ''), 16) - 1) & 0xFFFF; state.regs.iy = '0x' + iy.toString(16).padStart(4, '0').toUpperCase(); tCycles = 10; }
+          else if (dest === '(HL)') {
+            const a = (rH << 8) | rL;
+            const newVal = ((state.memory[a] || 0) - 1) & 0xFF;
+            memChanges.push({ addr: a, oldVal: state.memory[a] || 0, newVal });
+            state.memory[a] = newVal;
+            tCycles = 11;
+          } else if (dest === 'IXH') {
             let ix = parseInt(state.regs.ix.replace('0x', ''), 16) || 0;
             let val = ((ix >> 8) - 1) & 0xFF;
             state.regs.ix = '0x' + (((val & 0xFF) << 8) | (ix & 0xFF)).toString(16).padStart(4, '0').toUpperCase();
@@ -539,11 +777,13 @@ function getRctStore() {
             let val = ((iy & 0xFF) - 1) & 0xFF;
             state.regs.iy = '0x' + ((iy & 0xFF00) | (val & 0xFF)).toString(16).padStart(4, '0').toUpperCase();
           }
-          const val = dest === 'A' ? rA : (dest === 'B' ? rB : (dest === 'C' ? rC : (dest === 'D' ? rD : (dest === 'E' ? rE : (dest === 'H' ? rH : rL)))));
-          const z = (val & 0xFF) === 0 ? 1 : 0;
-          const s = (val & 0x80) ? 1 : 0;
-          state.flags = { ...state.flags, s, z, n: 1 };
-          tCycles = 4;
+          if (['A', 'B', 'C', 'D', 'E', 'H', 'L', '(HL)'].includes(dest)) {
+            const val = dest === '(HL)' ? state.memory[(rH << 8) | rL] : (dest === 'A' ? rA : (dest === 'B' ? rB : (dest === 'C' ? rC : (dest === 'D' ? rD : (dest === 'E' ? rE : (dest === 'H' ? rH : rL))))));
+            const z = (val & 0xFF) === 0 ? 1 : 0;
+            const s = (val & 0x80) ? 1 : 0;
+            state.flags = { ...state.flags, s, z, n: 1 };
+          }
+          tCycles = tCycles || 4;
         } else if (curItem.mnem === 'DJNZ') {
           rB = (rB - 1) & 0xFF;
           if (rB !== 0) {
@@ -569,8 +809,8 @@ function getRctStore() {
           const lo = val16 & 0xFF;
           const addrHi = (spNum - 1) & 0xFFFF;
           const addrLo = (spNum - 2) & 0xFFFF;
-          memChanges.push({ addr: addrHi, oldVal: state.memory[addrHi] });
-          memChanges.push({ addr: addrLo, oldVal: state.memory[addrLo] });
+          memChanges.push({ addr: addrHi, oldVal: state.memory[addrHi] || 0, newVal: hi });
+          memChanges.push({ addr: addrLo, oldVal: state.memory[addrLo] || 0, newVal: lo });
           state.memory[addrHi] = hi;
           state.memory[addrLo] = lo;
           spNum = addrLo;
@@ -590,7 +830,17 @@ function getRctStore() {
           if (dest === 'BC') { rB = hi; rC = lo; }
           else if (dest === 'DE') { rD = hi; rE = lo; }
           else if (dest === 'HL') { rH = hi; rL = lo; }
-          else if (dest === 'AF') { rA = hi; rF = lo; }
+          else if (dest === 'AF') {
+            rA = hi; rF = lo;
+            state.flags = {
+              s: (lo >> 7) & 1,
+              z: (lo >> 6) & 1,
+              h: (lo >> 4) & 1,
+              pv: (lo >> 2) & 1,
+              n: (lo >> 1) & 1,
+              c: lo & 1
+            };
+          }
           else if (dest === 'IX') { state.regs.ix = '0x' + val16.toString(16).padStart(4, '0').toUpperCase(); }
           else if (dest === 'IY') { state.regs.iy = '0x' + val16.toString(16).padStart(4, '0').toUpperCase(); }
           busAddr = '0x' + ((spNum - 2) & 0xFFFF).toString(16).padStart(4, '0').toUpperCase();
@@ -641,8 +891,8 @@ function getRctStore() {
             const lo = retAddr & 0xFF;
             const addrHi = (spNum - 1) & 0xFFFF;
             const addrLo = (spNum - 2) & 0xFFFF;
-            memChanges.push({ addr: addrHi, oldVal: state.memory[addrHi] });
-            memChanges.push({ addr: addrLo, oldVal: state.memory[addrLo] });
+            memChanges.push({ addr: addrHi, oldVal: state.memory[addrHi] || 0, newVal: hi });
+            memChanges.push({ addr: addrLo, oldVal: state.memory[addrLo] || 0, newVal: lo });
             state.memory[addrHi] = hi;
             state.memory[addrLo] = lo;
             spNum = addrLo;
@@ -780,7 +1030,12 @@ function getRctStore() {
       for (let i = 0xFF00; i < 0x10000; i++) {
         state.memory[i] = 0x00;
       }
-      if (loadedProgramData && loadedProgramData.memory) {
+      if (loadedProgramData && loadedProgramData.memoryMap) {
+        for (const [addrStr, val] of Object.entries(loadedProgramData.memoryMap)) {
+          const a = parseInt(addrStr, 10);
+          if (!isNaN(a) && a >= 0 && a < 65536) state.memory[a] = val;
+        }
+      } else if (loadedProgramData && loadedProgramData.memory) {
         for (let i = 0; i < loadedProgramData.memory.length; i++) {
           state.memory[i] = loadedProgramData.memory[i];
         }
@@ -871,16 +1126,13 @@ function getRctStore() {
     if (channel) {
       channel.onmessage = (e) => {
         if (e.data && e.data.type === 'SYNC_STATE') {
-          const { memoryProg, memoryStack, stackBase, memory, ...rest } = e.data.payload;
+          const { memChanges, memoryProg, memoryStack, stackBase, memory, ...rest } = e.data.payload;
           state = { ...state, ...rest };
-          if (memoryProg && state.memory) {
-            for (let i = 0; i < memoryProg.length; i++) {
-              state.memory[i] = memoryProg[i];
-            }
-          }
-          if (memoryStack && state.memory && typeof stackBase === 'number') {
-            for (let i = 0; i < memoryStack.length; i++) {
-              state.memory[stackBase + i] = memoryStack[i];
+          if (memChanges && state.memory) {
+            for (const ch of memChanges) {
+              if (typeof ch.addr === 'number' && typeof ch.newVal === 'number') {
+                state.memory[ch.addr] = ch.newVal;
+              }
             }
           }
           notify('remote');
@@ -889,7 +1141,8 @@ function getRctStore() {
     }
 
     window.__RCT_STORE__ = {
-      version: 4,
+      version: 7,
+      _channel: channel,
       _listeners: listeners,
       getState: () => state,
       subscribe: (fn) => {

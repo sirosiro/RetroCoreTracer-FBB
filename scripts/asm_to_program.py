@@ -15,6 +15,40 @@ import re
 import subprocess
 import shutil
 
+def normalize_asm_for_z80asm(src_path, dst_path):
+    """Ensure labels before EQU/DB/DW/DS or instructions have a trailing colon for z80asm."""
+    directives = {"EQU", "DEFB", "DEFW", "DEFS", "DB", "DW", "DS"}
+    mnemonics = {
+        "LD", "ADD", "SUB", "ADC", "SBC", "AND", "OR", "XOR", "CP", "INC", "DEC",
+        "PUSH", "POP", "CALL", "RET", "JP", "JR", "DJNZ", "HALT", "NOP", "EX",
+        "EXX", "DI", "EI", "RLCA", "RRCA", "RLA", "RRA", "DAA", "CPL", "SCF",
+        "CCF", "IN", "OUT", "BIT", "SET", "RES", "RLC", "RRC", "RL", "RR", "SLA",
+        "SRA", "SRL", "SLL", "RST", "IM", "NEG", "RETI", "RETN", "LDI", "LDIR",
+        "LDD", "LDDR", "CPI", "CPIR", "CPD", "CPDR", "INI", "INIR", "IND", "INDR",
+        "OUTI", "OTIR", "OUTD", "OTDR", "ORG", "END", "INCLUDE"
+    }
+    with open(src_path, "r", encoding="utf-8", errors="replace") as f:
+        lines = f.readlines()
+
+    norm_lines = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith(";") or stripped.startswith("//") or stripped.startswith("/*"):
+            norm_lines.append(line)
+            continue
+        m = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)\s+([A-Za-z_][A-Za-z0-9_]*)\b(.*)$", line)
+        if m:
+            first_tok = m.group(1)
+            second_tok = m.group(2)
+            rest = m.group(3)
+            if first_tok.upper() not in mnemonics and (second_tok.upper() in mnemonics or second_tok.upper() in directives):
+                norm_lines.append(f"{first_tok}: {second_tok}{rest}\n")
+                continue
+        norm_lines.append(line)
+
+    with open(dst_path, "w", encoding="utf-8") as f:
+        f.writelines(norm_lines)
+
 def write_intel_hex(file_path, mem_map):
     """Write memory dictionary {addr: [bytes]} to standard Intel HEX."""
     sorted_addrs = sorted(mem_map.keys())
@@ -74,15 +108,22 @@ def assemble_z80(asm_path, hex_path, json_path):
     first_pc = None
 
     if has_z80asm:
+        norm_asm = "/tmp/_rct_norm.asm"
+        normalize_asm_for_z80asm(asm_path, norm_asm)
         # z80asm -l outputs listing to stderr and binary to temp_bin
-        cmd = ["z80asm", "-l", "-o", temp_bin, asm_path]
+        cmd = ["z80asm", "-l", "-o", temp_bin, norm_asm]
         res = subprocess.run(cmd, capture_output=True, text=True)
-        if res.returncode != 0:
+        if res.returncode == 0:
+            listing_lines = (res.stderr or "").splitlines()
+        else:
             sys.stderr.write(f"[asm_to_program] z80asm failed:\n{res.stdout}\n{res.stderr}\n")
-            return False
-        # Listing output is captured in stderr
-        listing_lines = (res.stderr or "").splitlines()
-    else:
+            if has_pasmo:
+                sys.stderr.write("[asm_to_program] Gracefully falling back to pasmo...\n")
+                has_z80asm = False
+            else:
+                return False
+
+    if not has_z80asm and has_pasmo:
         # pasmo fallback
         cmd = ["pasmo", "--hex", asm_path, hex_path]
         res = subprocess.run(cmd, capture_output=True, text=True)
@@ -90,9 +131,9 @@ def assemble_z80(asm_path, hex_path, json_path):
             sys.stderr.write(f"[asm_to_program] pasmo failed:\n{res.stdout}\n{res.stderr}\n")
             return False
         # When falling back to pasmo without listing, fallback to hex_to_program.py
-        from hex_to_program import parse_intel_hex, disassemble_z80
-        mem, min_a, max_a = parse_intel_hex(hex_path)
-        prog = disassemble_z80(mem, min_a, max_a)
+        import hex_to_program
+        mem, min_a, max_a = hex_to_program.parse_intel_hex(hex_path)
+        prog = hex_to_program.disassemble_z80(mem, min_a, max_a)
         import json
         with open(json_path, "w") as f:
             json.dump({
@@ -101,6 +142,7 @@ def assemble_z80(asm_path, hex_path, json_path):
                 "program": prog,
                 "memory": [mem.get(i, 0) for i in range(min_a, min(min_a + 256, 65536))]
             }, f, indent=2)
+        print(f"[ASM2JSON] Converted {asm_path} via pasmo fallback -> {hex_path} & {json_path}")
         return True
 
     # Parse listing from z80asm
@@ -121,6 +163,8 @@ def assemble_z80(asm_path, hex_path, json_path):
         # File section header / footer comments
         if line.startswith("# File "):
             fname = os.path.basename(line.replace("# File ", "").strip())
+            if fname.startswith("_rct_norm"):
+                fname = os.path.basename(asm_path)
             program.append({
                 "addr": "", "bytes": "", "label": "", "mnem": "",
                 "dest": "", "src": "", "comment": f"; ===== [ File: {fname} ] =====", "isComment": True
@@ -140,8 +184,11 @@ def assemble_z80(asm_path, hex_path, json_path):
         # Format: '0000 3e 01\t\t...' vs '0000\t\t\t; ...'
         if rest.startswith(' ') and len(rest.strip()) > 0 and not rest.lstrip(' ').startswith('\t') and not rest.lstrip(' ').startswith(';'):
             parts = rest.split('\t')
-            bytes_part = parts[0].strip().upper()
+            raw_bytes = parts[0].strip().upper()
             src_part = '\t'.join(parts[1:]).strip()
+            # Filter only valid 2-character hex bytes (ignore '00...' from DS/DEFS)
+            valid_bytes = [b for b in raw_bytes.split() if re.match(r'^[0-9A-F]{2}$', b)]
+            bytes_part = ' '.join(valid_bytes)
         else:
             bytes_part = ""
             src_part = rest.strip()
@@ -260,7 +307,9 @@ def assemble_z80(asm_path, hex_path, json_path):
 
     write_intel_hex(hex_path, hex_blocks)
 
-    # Build 256-byte preview memory array for UI initial state
+    # Build complete memory map dictionary for UI full 64KB state
+    memory_map_dict = {str(addr): val for addr, val in flat_mem.items()}
+    # Build 256-byte preview memory array for UI initial state near startPc
     start_addr_num = int(first_pc, 16) if first_pc else 0
     preview_mem = [flat_mem.get(start_addr_num + i, 0) for i in range(256)]
 
@@ -269,7 +318,8 @@ def assemble_z80(asm_path, hex_path, json_path):
         "hexFile": os.path.basename(asm_path),
         "startPc": first_pc or "0000",
         "program": program,
-        "memory": preview_mem
+        "memory": preview_mem,
+        "memoryMap": memory_map_dict
     }
 
     with open(json_path, "w") as f:

@@ -25,11 +25,11 @@
 4. **DPPA v1.0 準拠 7 分割マルチペイン・スタジオ UI & 統合ペイン**:
    - `BroadcastChannel ('fbb_rct_sync')` および共有ステートストアを介して、全ペインが完全リアルタイムに双方向同期。
    - **RCT Controller (Top Toolbar)**: Step, Backstep, Run, Stop, Reset, クロック周波数（スピード）調整スライダー。
-   - **RCT Code View**: 構造化逆アセンブルリスト（Addr, Bytes, Label, Mnemonic, Dest, Src, Comment）と実行中 PC 行の追従ハイライト。
+   - **RCT Code View**: 構造化逆アセンブルリスト（Addr, Bytes, Label, Mnemonic, Dest, Src, Comment）と実行中 PC 行の追従ハイライト。各カラム境界のマウスドラッグによる無段階列幅リサイズ機能、および F-BB ダッシュボードの「Save Layout」と連動した列幅の永続保存・復元（`fbb_layout.json` / `localStorage`）を完備。長大ラベルも被らず快適にブラウジング可能（初期幅 140px、`[Reset Cols]` ボタン付き）。
    - **RCT Core Canvas**: Bus Glow SVG 動的バス光彩アニメーション、インタラクティブ・ズーム操作。
    - **RCT Registers & Flags**: メインレジスタ (AF, BC, DE, HL)、裏レジスタ (AF', BC', DE', HL')、インデックス (IX, IY)、特殊レジスタ (SP, PC, I, R, IM)、各フラグ (S, Z, H, PV, N, C)、更新ハイライトバッジ（`[POPPED]`, `[LOADED]` 等）。
    - **RCT Stack**: Z80 規約準拠スタックポインタ（初期値 `0x0000` / プレデクリメントにより `0xFFFE..0xFFFF` に配置）、プッシュ・ポップ・サブルーチン呼出階層追従、リアルタイム Hex/ASCII インスペクタ。
-   - **RCT Memory Map & Hex Viewer**: 64KB メモリアドレス空間の領域別カラービジュアライザおよびリアルタイム Hex / ASCII ダンプビュー。
+   - **RCT Memory Map & Hex Viewer**: 64KB メモリアドレス空間（`0x0000`〜`0xFFFF`）の完全なフラット RAM ビジュアライザおよびリアルタイム Hex / ASCII ダンプビュー。`ORG 0x0200` などの疎なメモリ配置（`memoryMap`）のロード、および `LD (DE), A` 等の書き込みデータを即座に追跡・永続保持する差分同期エンジン（`memChanges`）を搭載。
    - **RCT Breakpoints**: PC アドレス一致（PC_MATCH）等のブレークポイント登録・管理・ヒット時自動停止。
 
 5. **Z80 アセンブラソース (`.asm`) 直接読込＆リスティング連動 Code View (コメント・設計意図の完全保持)**:
@@ -41,6 +41,8 @@
    - 従来の `.hex` 指定時も自動で構造化逆アセンブラ (`scripts/hex_to_program.py`) が起動する 100% の後方互換性を保証。
    - ラベル優先検索・16進絶対アドレスパース・相対オフセット厳密計算 `(PC + 命令長 + offset) & 0xFFFF` を備えた高精度分岐エンジン（`JR`, `JP`, `DJNZ`, `CALL`, `RET`）。
    - スタック操作（`PUSH`, `POP`）および ALU 演算（`ADD`, `SUB`, `INC`, `DEC`）の完全なフラグ・レジスタ連動。
+   - 8bit/16bit 間接 `LD`（`LD A, (HL)`, `LD (DE), A`, `LD (BC), A` 等）、16bit レジスタペア `INC/DEC`（`HL, DE, BC, SP, IX, IY`、フラグ不変の Z80 規約準拠）、16bit 減算・比較（`SBC HL, DE`）、間接演算（`CP (HL)`, `INC (HL)`, `DEC (HL)`, `AND/OR/XOR (HL)`）、レジスタ交換（`EX DE, HL`, `EX AF, AF`'）、スタック復元（`POP AF` による全フラグビット完全復元）など実践的な命令群を完全サポート。
+   - アルゴリズム検証用の実践的なテストプログラム `examples/rle_codec.asm`（ランレングス圧縮・展開・自己検証）を完全サポート。
 
 6. **F-BB コア非侵襲アーキテクチャ (Zero Core Modification)**:
    - `~/.fbb/plugins/fbb-plugin-rct-z80` のシンボリックリンクにより F-BB 側にプラグインとして自動登録。
@@ -158,6 +160,7 @@ RetroCoreTracer-FBB/
 │   └── vfpga_device_config.h   # IntelliSense / clangd 用事前生成ヘッダー
 └── examples/                   # テスト用 Z80 プログラム群 (ASM / Intel HEX)
     ├── fibonacci.asm           # フィボナッチ数列計算デモ アセンブラソース (設計メモ・コメント付き)
+    ├── rle_codec.asm           # ランレングス圧縮 (RLE) エンコード/デコード & 自己検証テスト (ASM版)
     ├── fibonacci.hex           # フィボナッチ数列計算デモ (ループ・相対ジャンプ)
     ├── z80_loop_test.hex       # DJNZ ループカウンタ検証テスト
     ├── z80_stack_test.hex      # PUSH/POP/CALL/RET スタック呼出検証テスト
@@ -176,22 +179,22 @@ RetroCoreTracer-FBB/
 -----------------------------------------------------------------------------------
 Language                         files          blank        comment           code
 -----------------------------------------------------------------------------------
-JavaScript                           8            532            122           7271
+JavaScript                           8            570            127           9824
 Verilog-SystemVerilog                4            274            128           2518
-Python                               4            112             80           1353
+Python                               4            116             83           1396
 C++                                  2             52             12            577
-Markdown                             4            119              0            515
-JSON                                10              0              0            419
+Markdown                             4            119              0            516
+JSON                                10              0              0            432
 C/C++ Header                         5             48             11            285
-Bourne Shell                         1             11              6            101
+Assembly                             2             35             53            118
+Bourne Shell                         1             11              6            105
 CMake                                2             11              0             60
 C                                    1             11              1             59
-Assembly                             1              4             10             12
 -----------------------------------------------------------------------------------
-SUM:                                42           1174            370          13170
+SUM:                                43           1247            421          15890
 -----------------------------------------------------------------------------------
 ```
-*(ドキュメント Markdown 等を含む総行数は 14,714 行)*
+*(ドキュメント Markdown 等を含む総行数は 17,558 行)*
 
 ---
 
@@ -254,13 +257,16 @@ fbb lab scenario/ examples/fibonacci.asm
 # または
 ./start_lab.sh ../RetroCoreTracer-FBB/scenario/ examples/fibonacci.asm
 
-# 2. 任意の HEX ファイル（ループテスト）を指定して起動 (従来の HEX も完全サポート)
+# 2. ランレングス圧縮 (RLE) エンコード/デコード＆自己検証テスト (.asm) を指定して起動
+fbb lab scenario/ examples/rle_codec.asm
+
+# 3. 任意の HEX ファイル（ループテスト）を指定して起動 (従来の HEX も完全サポート)
 fbb lab scenario/ examples/z80_loop_test.hex
 
-# 3. スタック・サブルーチン呼出テストを指定して起動
+# 4. スタック・サブルーチン呼出テストを指定して起動
 fbb lab scenario/ examples/z80_stack_test.hex
 
-# 4. 引数を省略した場合は、デフォルトでフィボナッチ数列デモ (examples/fibonacci.asm) が自動アセンブル・起動します
+# 5. 引数を省略した場合は、デフォルトでフィボナッチ数列デモ (examples/fibonacci.asm) が自動アセンブル・起動します
 fbb lab scenario/
 ```
 
@@ -271,6 +277,10 @@ fbb lab scenario/
   - 従来の「HEX 逆アセンブル」では消失していたブロックコメント（`; ==================` など）、各命令のインラインコメント（`; loop counter` など）、および空行の構造がそのまま Code View に表示されます。
 - **マルチファイル・モジュール構成 (`INCLUDE`) の透過的展開**:
   - 実践的なプロジェクトで `INCLUDE "tables.asm"` などのディレクティブを使用している場合でも、`z80asm` のリスティング展開機能により、ファイル境界（`# File ...`）を保ったまま 1 つのシームレスなプログラムビューとして統合表示されます。
+- **Code View の列幅自由調整と Save Layout 連動**:
+  - Code View テーブルのカラム境界（`Addr`, `Bytes`, `Label`, `Mnemonic`, `Dest`, `Src`, `Comment`）をマウスでドラッグして無段階に幅を調整可能。ダッシュボード上部の「Save Layout」ボタンをクリックすると、調整した列幅が `scenario/fbb_layout.json` に永続保存され、次回起動時にも復元されます。`[Reset Cols]` ボタンにより標準幅へのリセットも可能です。
+- **64KB 全域のフラット RAM とメモリ差分同期**:
+  - `0x0000`〜`0xFFFF` の全領域が読み書き可能なフラット RAM として機能します。`ORG 0x0200` などの飛び地データ（`memoryMap`）も完全にロードされ、プログラム実行によるメモリ書き込み（`0x0300` などのバッファ）も差分同期（`memChanges`）により消滅せず永続保持されます。
 
 ブラウザで `http://localhost:8080` を開き、上部メニューの「Add-ons & Robotics」または「Custom Panes」から **RetroCoreTracer** の各ペイン（または統合スタジオペイン）を選択すると、Dockview 上にリッチスタジオ UI が展開され、指定したプログラムの逆アセンブラ行・レジスタ・スタック・メモリが自動同期されます。
 

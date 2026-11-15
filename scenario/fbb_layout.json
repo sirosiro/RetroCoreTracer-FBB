@@ -161,6 +161,22 @@
             },
             "title": "Registers"
         },
+        "rct-canvas": {
+            "id": "rct-canvas",
+            "contentComponent": "rct-canvas",
+            "params": {
+                "_componentName": "rct-canvas"
+            },
+            "title": "RCT Core Canvas"
+        },
+        "dtsVisualizer": {
+            "id": "dtsVisualizer",
+            "contentComponent": "dtsVisualizer",
+            "params": {
+                "_componentName": "dtsVisualizer"
+            },
+            "title": "DTS Visualizer & AI"
+        },
         "rct-controller": {
             "id": "rct-controller",
             "contentComponent": "rct-controller",
@@ -173,7 +189,16 @@
             "id": "rct-code-view",
             "contentComponent": "rct-code-view",
             "params": {
-                "_componentName": "rct-code-view"
+                "_componentName": "rct-code-view",
+                "colWidths": {
+                    "addr": 48,
+                    "bytes": 58,
+                    "label": 47,
+                    "mnem": 61,
+                    "dest": 46,
+                    "src": 130,
+                    "comment": 280
+                }
             },
             "title": "RCT Code View"
         },
@@ -216,22 +241,6 @@
                 "_componentName": "rct-stack"
             },
             "title": "RCT Stack"
-        },
-        "rct-canvas": {
-            "id": "rct-canvas",
-            "contentComponent": "rct-canvas",
-            "params": {
-                "_componentName": "rct-canvas"
-            },
-            "title": "RCT Core Canvas"
-        },
-        "dtsVisualizer": {
-            "id": "dtsVisualizer",
-            "contentComponent": "dtsVisualizer",
-            "params": {
-                "_componentName": "dtsVisualizer"
-            },
-            "title": "DTS Visualizer & AI"
         }
     },
     "activeGroup": "3",
