@@ -189,6 +189,11 @@ def assemble_z80(asm_path, hex_path, json_path):
             # Filter only valid 2-character hex bytes (ignore '00...' from DS/DEFS)
             valid_bytes = [b for b in raw_bytes.split() if re.match(r'^[0-9A-F]{2}$', b)]
             bytes_part = ' '.join(valid_bytes)
+            if not bytes_part and '..' in raw_bytes:
+                # String literal like DB "..." that z80asm abbreviated as '..' in listing
+                m_str = re.search(r'DB\s+"([^"]*)"', src_part, re.IGNORECASE)
+                if m_str:
+                    bytes_part = ' '.join(f"{ord(c):02X}" for c in m_str.group(1))
         else:
             bytes_part = ""
             src_part = rest.strip()
@@ -217,7 +222,7 @@ def assemble_z80(asm_path, hex_path, json_path):
             elif src_part.endswith(':'):
                 pending_label = src_part
                 program.append({
-                    "addr": "", "bytes": "", "label": src_part, "mnem": "",
+                    "addr": addr_hex, "bytes": "", "label": src_part, "mnem": "",
                     "dest": "", "src": "", "comment": "", "isLabel": True
                 })
             else:

@@ -3,7 +3,7 @@ export const minApiVersion = 1;
 
 function getRctStore() {
   if (typeof window === 'undefined') return null;
-  if (!window.__RCT_STORE__ || (window.__RCT_STORE__.version || 0) < 7) {
+  if (!window.__RCT_STORE__ || (window.__RCT_STORE__.version || 0) < 8) {
     if (typeof window !== 'undefined' && window.__RCT_STORE__ && window.__RCT_STORE__._channel) {
       try { window.__RCT_STORE__._channel.close(); } catch (e) {}
     }
@@ -264,6 +264,35 @@ function getRctStore() {
         return v;
       };
 
+const resolveIndexedAddr = (str, item) => {
+        if (!str) return null;
+        const clean = str.replace(',', '').trim();
+        const m = clean.match(/^\(\s*(IX|IY)\s*([+-])\s*([^)]+)\)$/i);
+        if (!m) return null;
+        const reg = m[1].toUpperCase();
+        let base = (reg === 'IX')
+          ? (parseInt(state.regs.ix.replace('0x', ''), 16) || 0)
+          : (parseInt(state.regs.iy.replace('0x', ''), 16) || 0);
+
+        let disp = null;
+        if (item && item.bytes) {
+          const b = item.bytes.trim().split(/\s+/).map(x => parseInt(x, 16)).filter(x => !isNaN(x));
+          if (b.length >= 3 && (b[0] === 0xDD || b[0] === 0xFD)) {
+            const raw = b[2];
+            disp = (raw >= 128) ? raw - 256 : raw;
+          }
+        }
+        if (disp === null) {
+          disp = 0;
+          if (m[2] && m[3]) {
+            const sign = m[2] === '-' ? -1 : 1;
+            const exprVal = getImmediateVal(m[3], item);
+            if (!isNaN(exprVal)) disp = sign * exprVal;
+          }
+        }
+        return (base + disp) & 0xFFFF;
+      };
+
       const resolveJumpTarget = (item, candidate) => {
         const candidates = [candidate, item && item.dest, item && item.src].filter(Boolean);
         for (let cand of candidates) {
@@ -304,10 +333,12 @@ function getRctStore() {
           const dest = curItem.dest.replace(',', '').trim();
           const src = curItem.src.trim();
           let srcVal = 0;
-          const imm = getImmediateVal(src, curItem);
-          if (!isNaN(imm)) {
-            srcVal = imm;
-            tCycles = dest.length === 2 ? 10 : 7;
+          const srcIdxAddr = resolveIndexedAddr(src, curItem);
+          const destIdxAddr = resolveIndexedAddr(dest, curItem);
+
+          if (srcIdxAddr !== null) {
+            srcVal = state.memory[srcIdxAddr] || 0;
+            tCycles = 19;
           } else if (src === '(HL)') {
             srcVal = state.memory[(rH << 8) | rL] || 0;
             tCycles = 7;
@@ -334,8 +365,19 @@ function getRctStore() {
           else if (src === 'IXL') { const ix = parseInt(state.regs.ix.replace('0x', ''), 16) || 0; srcVal = ix & 0xFF; }
           else if (src === 'IYH') { const iy = parseInt(state.regs.iy.replace('0x', ''), 16) || 0; srcVal = (iy >> 8) & 0xFF; }
           else if (src === 'IYL') { const iy = parseInt(state.regs.iy.replace('0x', ''), 16) || 0; srcVal = iy & 0xFF; }
+          else {
+            const imm = getImmediateVal(src, curItem);
+            if (!isNaN(imm)) {
+              srcVal = imm;
+              tCycles = dest.length === 2 ? 10 : 7;
+            }
+          }
 
-          if (dest === '(HL)') {
+          if (destIdxAddr !== null) {
+            memChanges.push({ addr: destIdxAddr, oldVal: state.memory[destIdxAddr] || 0, newVal: srcVal & 0xFF });
+            state.memory[destIdxAddr] = srcVal & 0xFF;
+            tCycles = 19;
+          } else if (dest === '(HL)') {
             const a = (rH << 8) | rL;
             memChanges.push({ addr: a, oldVal: state.memory[a] || 0, newVal: srcVal & 0xFF });
             state.memory[a] = srcVal & 0xFF;
@@ -384,30 +426,193 @@ function getRctStore() {
             state.regs.sp = '0x' + (srcVal & 0xFFFF).toString(16).padStart(4, '0').toUpperCase();
           }
         } else if (curItem.mnem === 'ADD') {
+          const dest = (curItem.dest || '').replace(',', '').trim();
           const src = curItem.src.trim();
-          let srcVal = 0;
-          const imm = getImmediateVal(src, curItem);
-          if (!isNaN(imm)) srcVal = imm;
-          else if (src === 'B') srcVal = rB;
-          else if (src === 'C') srcVal = rC;
-          else if (src === 'D') srcVal = rD;
-          else if (src === 'E') srcVal = rE;
-          else if (src === 'H') srcVal = rH;
-          else if (src === 'L') srcVal = rL;
-          else if (src === 'A') srcVal = rA;
-
-          const oldA = rA;
-          const sum = rA + srcVal;
-          rA = sum & 0xFF;
+          if (dest === 'HL') {
+            const hl = (rH << 8) | rL;
+            let val = 0;
+            if (src === 'BC') val = (rB << 8) | rC;
+            else if (src === 'DE') val = (rD << 8) | rE;
+            else if (src === 'HL') val = hl;
+            else if (src === 'SP') val = getSp();
+            const sum = hl + val;
+            rH = ((sum & 0xFFFF) >> 8) & 0xFF;
+            rL = sum & 0xFF;
+            const cOut = (sum > 0xFFFF) ? 1 : 0;
+            state.flags = { ...state.flags, n: 0, c: cOut };
+            rF = (rF & ~0x03) | cOut;
+            tCycles = 11;
+          } else {
+            let srcVal = 0;
+            const idxAddr = resolveIndexedAddr(src, curItem);
+            if (idxAddr !== null) {
+              srcVal = state.memory[idxAddr] || 0;
+              tCycles = 19;
+            } else {
+              const imm = getImmediateVal(src, curItem);
+              if (!isNaN(imm)) srcVal = imm;
+              else if (src === 'B') srcVal = rB;
+              else if (src === 'C') srcVal = rC;
+              else if (src === 'D') srcVal = rD;
+              else if (src === 'E') srcVal = rE;
+              else if (src === 'H') srcVal = rH;
+              else if (src === 'L') srcVal = rL;
+              else if (src === 'A') srcVal = rA;
+              tCycles = 4;
+            }
+            const oldA = rA;
+            const sum = rA + srcVal;
+            rA = sum & 0xFF;
+            const s = (rA & 0x80) ? 1 : 0;
+            const z = (rA === 0) ? 1 : 0;
+            const h = ((oldA & 0x0F) + (srcVal & 0x0F) > 0x0F) ? 1 : 0;
+            const c = (sum > 0xFF) ? 1 : 0;
+            const pv = (((oldA ^ ~srcVal) & (oldA ^ rA)) & 0x80) ? 1 : 0;
+            state.flags = { s, z, h, pv, n: 0, c };
+            rF = (s << 7) | (z << 6) | (h << 4) | (pv << 2) | c;
+          }
+        } else if (curItem.mnem === 'ADC') {
+          const dest = (curItem.dest || '').replace(',', '').trim();
+          const src = curItem.src.trim();
+          if (dest === 'HL') {
+            const hl = (rH << 8) | rL;
+            let val = 0;
+            if (src === 'BC') val = (rB << 8) | rC;
+            else if (src === 'DE') val = (rD << 8) | rE;
+            else if (src === 'HL') val = hl;
+            else if (src === 'SP') val = getSp();
+            else val = getImmediateVal(src, curItem) || 0;
+            const cIn = state.flags.c ? 1 : 0;
+            const sum = hl + val + cIn;
+            rH = ((sum & 0xFFFF) >> 8) & 0xFF;
+            rL = sum & 0xFF;
+            const s = (sum & 0x8000) ? 1 : 0;
+            const z = ((sum & 0xFFFF) === 0) ? 1 : 0;
+            const cOut = (sum > 0xFFFF) ? 1 : 0;
+            const pv = (((hl ^ ~val) & (hl ^ sum)) & 0x8000) ? 1 : 0;
+            state.flags = { ...state.flags, s, z, pv, n: 0, c: cOut };
+            rF = (s << 7) | (z << 6) | (pv << 2) | cOut;
+            tCycles = 15;
+          } else {
+            let srcVal = 0;
+            const idxAddr = resolveIndexedAddr(src, curItem);
+            if (idxAddr !== null) srcVal = state.memory[idxAddr] || 0;
+            else {
+              const imm = getImmediateVal(src, curItem);
+              if (!isNaN(imm)) srcVal = imm;
+              else if (src === 'B') srcVal = rB;
+              else if (src === 'C') srcVal = rC;
+              else if (src === 'D') srcVal = rD;
+              else if (src === 'E') srcVal = rE;
+              else if (src === 'H') srcVal = rH;
+              else if (src === 'L') srcVal = rL;
+              else if (src === 'A') srcVal = rA;
+            }
+            const cIn = state.flags.c ? 1 : 0;
+            const oldA = rA;
+            const sum = rA + srcVal + cIn;
+            rA = sum & 0xFF;
+            const s = (rA & 0x80) ? 1 : 0;
+            const z = (rA === 0) ? 1 : 0;
+            const h = ((oldA & 0x0F) + (srcVal & 0x0F) + cIn > 0x0F) ? 1 : 0;
+            const c = (sum > 0xFF) ? 1 : 0;
+            const pv = (((oldA ^ ~srcVal) & (oldA ^ rA)) & 0x80) ? 1 : 0;
+            state.flags = { s, z, h, pv, n: 0, c };
+            rF = (s << 7) | (z << 6) | (h << 4) | (pv << 2) | c;
+            tCycles = 4;
+          }
+        } else if (curItem.mnem === 'DAA') {
           tCycles = 4;
-
+          let correction = 0;
+          let cOut = state.flags.c ? 1 : 0;
+          const lowNib = rA & 0x0F;
+          const highNib = (rA >> 4) & 0x0F;
+          if (state.flags.n) {
+            if (state.flags.h || lowNib > 9) correction |= 0x06;
+            if (cOut || highNib > 9) {
+              correction |= 0x60;
+              cOut = 1;
+            }
+            rA = (rA - correction) & 0xFF;
+          } else {
+            if (state.flags.h || lowNib > 9) correction |= 0x06;
+            if (cOut || highNib > 9 || (highNib === 9 && lowNib > 9)) {
+              correction |= 0x60;
+              cOut = 1;
+            }
+            rA = (rA + correction) & 0xFF;
+          }
           const s = (rA & 0x80) ? 1 : 0;
           const z = (rA === 0) ? 1 : 0;
-          const h = ((oldA & 0x0F) + (srcVal & 0x0F) > 0x0F) ? 1 : 0;
-          const c = (sum > 0xFF) ? 1 : 0;
-          const pv = (((oldA ^ ~srcVal) & (oldA ^ rA)) & 0x80) ? 1 : 0;
-          state.flags = { s, z, h, pv, n: 0, c };
-          rF = (s << 7) | (z << 6) | (h << 4) | (pv << 2) | c;
+          let p = 0; for (let i = 0; i < 8; i++) if ((rA >> i) & 1) p++;
+          const pv = (p % 2 === 0) ? 1 : 0;
+          state.flags = { ...state.flags, s, z, pv, c: cOut };
+          rF = (s << 7) | (z << 6) | (pv << 2) | cOut;
+        } else if (curItem.mnem === 'BIT') {
+          tCycles = 20;
+          const bStr = (curItem.dest || '').replace(',', '').trim();
+          let bitNum = parseInt(bStr, 10);
+          if (curItem.bytes) {
+            const b = curItem.bytes.trim().split(/\s+/).map(x => parseInt(x, 16));
+            if (b.length >= 4 && (b[0] === 0xDD || b[0] === 0xFD) && b[1] === 0xCB) {
+              bitNum = (b[3] >> 3) & 7;
+            } else if (b.length >= 2 && b[0] === 0xCB) {
+              bitNum = (b[1] >> 3) & 7;
+            }
+          }
+          if (isNaN(bitNum)) bitNum = getImmediateVal(bStr, curItem);
+          const op = (curItem.src || '').trim();
+          let val = 0;
+          const idxAddr = resolveIndexedAddr(op, curItem);
+          if (idxAddr !== null) val = state.memory[idxAddr] || 0;
+          else if (op === '(HL)') val = state.memory[(rH << 8) | rL] || 0;
+          else if (op === 'A') val = rA;
+          else if (op === 'B') val = rB;
+          else if (op === 'C') val = rC;
+          else if (op === 'D') val = rD;
+          else if (op === 'E') val = rE;
+          else if (op === 'H') val = rH;
+          else if (op === 'L') val = rL;
+
+          const isZero = ((val & (1 << bitNum)) === 0) ? 1 : 0;
+          state.flags = { ...state.flags, z: isZero, h: 1, n: 0 };
+          rF = (rF & ~0x52) | (isZero << 6) | (1 << 4);
+        } else if (curItem.mnem === 'SET' || curItem.mnem === 'RES') {
+          tCycles = 23;
+          const isSet = curItem.mnem === 'SET';
+          const bStr = (curItem.dest || '').replace(',', '').trim();
+          let bitNum = parseInt(bStr, 10);
+          if (curItem.bytes) {
+            const b = curItem.bytes.trim().split(/\s+/).map(x => parseInt(x, 16));
+            if (b.length >= 4 && (b[0] === 0xDD || b[0] === 0xFD) && b[1] === 0xCB) {
+              bitNum = (b[3] >> 3) & 7;
+            } else if (b.length >= 2 && b[0] === 0xCB) {
+              bitNum = (b[1] >> 3) & 7;
+            }
+          }
+          if (isNaN(bitNum)) bitNum = getImmediateVal(bStr, curItem);
+          const op = (curItem.src || '').trim();
+          const idxAddr = resolveIndexedAddr(op, curItem);
+          const modifyBit = (v) => isSet ? (v | (1 << bitNum)) : (v & ~(1 << bitNum));
+
+          if (idxAddr !== null) {
+            const oldVal = state.memory[idxAddr] || 0;
+            const newVal = modifyBit(oldVal) & 0xFF;
+            memChanges.push({ addr: idxAddr, oldVal, newVal });
+            state.memory[idxAddr] = newVal;
+          } else if (op === '(HL)') {
+            const addr = (rH << 8) | rL;
+            const oldVal = state.memory[addr] || 0;
+            const newVal = modifyBit(oldVal) & 0xFF;
+            memChanges.push({ addr, oldVal, newVal });
+            state.memory[addr] = newVal;
+          } else if (op === 'A') rA = modifyBit(rA) & 0xFF;
+          else if (op === 'B') rB = modifyBit(rB) & 0xFF;
+          else if (op === 'C') rC = modifyBit(rC) & 0xFF;
+          else if (op === 'D') rD = modifyBit(rD) & 0xFF;
+          else if (op === 'E') rE = modifyBit(rE) & 0xFF;
+          else if (op === 'H') rH = modifyBit(rH) & 0xFF;
+          else if (op === 'L') rL = modifyBit(rL) & 0xFF;
         } else if (curItem.mnem === 'SUB') {
           const operand = (curItem.dest || curItem.src || '').replace(',', '').trim();
           let srcVal = 0;
@@ -570,7 +775,26 @@ function getRctStore() {
             rA = (altAF >> 8) & 0xFF;
             rF = altAF & 0xFF;
             state.regs.af_alt = '0x' + ((tA << 8) | tF).toString(16).padStart(4, '0').toUpperCase();
+            state.flags = {
+              s: (rF >> 7) & 1,
+              z: (rF >> 6) & 1,
+              h: (rF >> 4) & 1,
+              pv: (rF >> 2) & 1,
+              n: (rF >> 1) & 1,
+              c: rF & 1
+            };
           }
+        } else if (curItem.mnem === 'EXX') {
+          tCycles = 4;
+          const bcAlt = parseInt(state.regs.bc_alt.replace('0x', ''), 16) || 0;
+          const deAlt = parseInt(state.regs.de_alt.replace('0x', ''), 16) || 0;
+          const hlAlt = parseInt(state.regs.hl_alt.replace('0x', ''), 16) || 0;
+          state.regs.bc_alt = '0x' + (((rB << 8) | rC) & 0xFFFF).toString(16).padStart(4, '0').toUpperCase();
+          state.regs.de_alt = '0x' + (((rD << 8) | rE) & 0xFFFF).toString(16).padStart(4, '0').toUpperCase();
+          state.regs.hl_alt = '0x' + (((rH << 8) | rL) & 0xFFFF).toString(16).padStart(4, '0').toUpperCase();
+          rB = (bcAlt >> 8) & 0xFF; rC = bcAlt & 0xFF;
+          rD = (deAlt >> 8) & 0xFF; rE = deAlt & 0xFF;
+          rH = (hlAlt >> 8) & 0xFF; rL = hlAlt & 0xFF;
         } else if (curItem.mnem === 'JR') {
           let shouldJump = true;
           let targetCandidate = '';
@@ -1141,7 +1365,7 @@ function getRctStore() {
     }
 
     window.__RCT_STORE__ = {
-      version: 7,
+      version: 8,
       _channel: channel,
       _listeners: listeners,
       getState: () => state,

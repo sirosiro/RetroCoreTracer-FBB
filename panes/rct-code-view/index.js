@@ -3,7 +3,7 @@ export const minApiVersion = 1;
 
 function getRctStore() {
   if (typeof window === 'undefined') return null;
-  if (!window.__RCT_STORE__ || (window.__RCT_STORE__.version || 0) < 7) {
+  if (!window.__RCT_STORE__ || (window.__RCT_STORE__.version || 0) < 8) {
     if (typeof window !== 'undefined' && window.__RCT_STORE__ && window.__RCT_STORE__._channel) {
       try { window.__RCT_STORE__._channel.close(); } catch (e) {}
     }
@@ -264,6 +264,35 @@ function getRctStore() {
         return v;
       };
 
+const resolveIndexedAddr = (str, item) => {
+        if (!str) return null;
+        const clean = str.replace(',', '').trim();
+        const m = clean.match(/^\(\s*(IX|IY)\s*([+-])\s*([^)]+)\)$/i);
+        if (!m) return null;
+        const reg = m[1].toUpperCase();
+        let base = (reg === 'IX')
+          ? (parseInt(state.regs.ix.replace('0x', ''), 16) || 0)
+          : (parseInt(state.regs.iy.replace('0x', ''), 16) || 0);
+
+        let disp = null;
+        if (item && item.bytes) {
+          const b = item.bytes.trim().split(/\s+/).map(x => parseInt(x, 16)).filter(x => !isNaN(x));
+          if (b.length >= 3 && (b[0] === 0xDD || b[0] === 0xFD)) {
+            const raw = b[2];
+            disp = (raw >= 128) ? raw - 256 : raw;
+          }
+        }
+        if (disp === null) {
+          disp = 0;
+          if (m[2] && m[3]) {
+            const sign = m[2] === '-' ? -1 : 1;
+            const exprVal = getImmediateVal(m[3], item);
+            if (!isNaN(exprVal)) disp = sign * exprVal;
+          }
+        }
+        return (base + disp) & 0xFFFF;
+      };
+
       const resolveJumpTarget = (item, candidate) => {
         const candidates = [candidate, item && item.dest, item && item.src].filter(Boolean);
         for (let cand of candidates) {
@@ -304,10 +333,12 @@ function getRctStore() {
           const dest = curItem.dest.replace(',', '').trim();
           const src = curItem.src.trim();
           let srcVal = 0;
-          const imm = getImmediateVal(src, curItem);
-          if (!isNaN(imm)) {
-            srcVal = imm;
-            tCycles = dest.length === 2 ? 10 : 7;
+          const srcIdxAddr = resolveIndexedAddr(src, curItem);
+          const destIdxAddr = resolveIndexedAddr(dest, curItem);
+
+          if (srcIdxAddr !== null) {
+            srcVal = state.memory[srcIdxAddr] || 0;
+            tCycles = 19;
           } else if (src === '(HL)') {
             srcVal = state.memory[(rH << 8) | rL] || 0;
             tCycles = 7;
@@ -334,8 +365,19 @@ function getRctStore() {
           else if (src === 'IXL') { const ix = parseInt(state.regs.ix.replace('0x', ''), 16) || 0; srcVal = ix & 0xFF; }
           else if (src === 'IYH') { const iy = parseInt(state.regs.iy.replace('0x', ''), 16) || 0; srcVal = (iy >> 8) & 0xFF; }
           else if (src === 'IYL') { const iy = parseInt(state.regs.iy.replace('0x', ''), 16) || 0; srcVal = iy & 0xFF; }
+          else {
+            const imm = getImmediateVal(src, curItem);
+            if (!isNaN(imm)) {
+              srcVal = imm;
+              tCycles = dest.length === 2 ? 10 : 7;
+            }
+          }
 
-          if (dest === '(HL)') {
+          if (destIdxAddr !== null) {
+            memChanges.push({ addr: destIdxAddr, oldVal: state.memory[destIdxAddr] || 0, newVal: srcVal & 0xFF });
+            state.memory[destIdxAddr] = srcVal & 0xFF;
+            tCycles = 19;
+          } else if (dest === '(HL)') {
             const a = (rH << 8) | rL;
             memChanges.push({ addr: a, oldVal: state.memory[a] || 0, newVal: srcVal & 0xFF });
             state.memory[a] = srcVal & 0xFF;
@@ -384,30 +426,193 @@ function getRctStore() {
             state.regs.sp = '0x' + (srcVal & 0xFFFF).toString(16).padStart(4, '0').toUpperCase();
           }
         } else if (curItem.mnem === 'ADD') {
+          const dest = (curItem.dest || '').replace(',', '').trim();
           const src = curItem.src.trim();
-          let srcVal = 0;
-          const imm = getImmediateVal(src, curItem);
-          if (!isNaN(imm)) srcVal = imm;
-          else if (src === 'B') srcVal = rB;
-          else if (src === 'C') srcVal = rC;
-          else if (src === 'D') srcVal = rD;
-          else if (src === 'E') srcVal = rE;
-          else if (src === 'H') srcVal = rH;
-          else if (src === 'L') srcVal = rL;
-          else if (src === 'A') srcVal = rA;
-
-          const oldA = rA;
-          const sum = rA + srcVal;
-          rA = sum & 0xFF;
+          if (dest === 'HL') {
+            const hl = (rH << 8) | rL;
+            let val = 0;
+            if (src === 'BC') val = (rB << 8) | rC;
+            else if (src === 'DE') val = (rD << 8) | rE;
+            else if (src === 'HL') val = hl;
+            else if (src === 'SP') val = getSp();
+            const sum = hl + val;
+            rH = ((sum & 0xFFFF) >> 8) & 0xFF;
+            rL = sum & 0xFF;
+            const cOut = (sum > 0xFFFF) ? 1 : 0;
+            state.flags = { ...state.flags, n: 0, c: cOut };
+            rF = (rF & ~0x03) | cOut;
+            tCycles = 11;
+          } else {
+            let srcVal = 0;
+            const idxAddr = resolveIndexedAddr(src, curItem);
+            if (idxAddr !== null) {
+              srcVal = state.memory[idxAddr] || 0;
+              tCycles = 19;
+            } else {
+              const imm = getImmediateVal(src, curItem);
+              if (!isNaN(imm)) srcVal = imm;
+              else if (src === 'B') srcVal = rB;
+              else if (src === 'C') srcVal = rC;
+              else if (src === 'D') srcVal = rD;
+              else if (src === 'E') srcVal = rE;
+              else if (src === 'H') srcVal = rH;
+              else if (src === 'L') srcVal = rL;
+              else if (src === 'A') srcVal = rA;
+              tCycles = 4;
+            }
+            const oldA = rA;
+            const sum = rA + srcVal;
+            rA = sum & 0xFF;
+            const s = (rA & 0x80) ? 1 : 0;
+            const z = (rA === 0) ? 1 : 0;
+            const h = ((oldA & 0x0F) + (srcVal & 0x0F) > 0x0F) ? 1 : 0;
+            const c = (sum > 0xFF) ? 1 : 0;
+            const pv = (((oldA ^ ~srcVal) & (oldA ^ rA)) & 0x80) ? 1 : 0;
+            state.flags = { s, z, h, pv, n: 0, c };
+            rF = (s << 7) | (z << 6) | (h << 4) | (pv << 2) | c;
+          }
+        } else if (curItem.mnem === 'ADC') {
+          const dest = (curItem.dest || '').replace(',', '').trim();
+          const src = curItem.src.trim();
+          if (dest === 'HL') {
+            const hl = (rH << 8) | rL;
+            let val = 0;
+            if (src === 'BC') val = (rB << 8) | rC;
+            else if (src === 'DE') val = (rD << 8) | rE;
+            else if (src === 'HL') val = hl;
+            else if (src === 'SP') val = getSp();
+            else val = getImmediateVal(src, curItem) || 0;
+            const cIn = state.flags.c ? 1 : 0;
+            const sum = hl + val + cIn;
+            rH = ((sum & 0xFFFF) >> 8) & 0xFF;
+            rL = sum & 0xFF;
+            const s = (sum & 0x8000) ? 1 : 0;
+            const z = ((sum & 0xFFFF) === 0) ? 1 : 0;
+            const cOut = (sum > 0xFFFF) ? 1 : 0;
+            const pv = (((hl ^ ~val) & (hl ^ sum)) & 0x8000) ? 1 : 0;
+            state.flags = { ...state.flags, s, z, pv, n: 0, c: cOut };
+            rF = (s << 7) | (z << 6) | (pv << 2) | cOut;
+            tCycles = 15;
+          } else {
+            let srcVal = 0;
+            const idxAddr = resolveIndexedAddr(src, curItem);
+            if (idxAddr !== null) srcVal = state.memory[idxAddr] || 0;
+            else {
+              const imm = getImmediateVal(src, curItem);
+              if (!isNaN(imm)) srcVal = imm;
+              else if (src === 'B') srcVal = rB;
+              else if (src === 'C') srcVal = rC;
+              else if (src === 'D') srcVal = rD;
+              else if (src === 'E') srcVal = rE;
+              else if (src === 'H') srcVal = rH;
+              else if (src === 'L') srcVal = rL;
+              else if (src === 'A') srcVal = rA;
+            }
+            const cIn = state.flags.c ? 1 : 0;
+            const oldA = rA;
+            const sum = rA + srcVal + cIn;
+            rA = sum & 0xFF;
+            const s = (rA & 0x80) ? 1 : 0;
+            const z = (rA === 0) ? 1 : 0;
+            const h = ((oldA & 0x0F) + (srcVal & 0x0F) + cIn > 0x0F) ? 1 : 0;
+            const c = (sum > 0xFF) ? 1 : 0;
+            const pv = (((oldA ^ ~srcVal) & (oldA ^ rA)) & 0x80) ? 1 : 0;
+            state.flags = { s, z, h, pv, n: 0, c };
+            rF = (s << 7) | (z << 6) | (h << 4) | (pv << 2) | c;
+            tCycles = 4;
+          }
+        } else if (curItem.mnem === 'DAA') {
           tCycles = 4;
-
+          let correction = 0;
+          let cOut = state.flags.c ? 1 : 0;
+          const lowNib = rA & 0x0F;
+          const highNib = (rA >> 4) & 0x0F;
+          if (state.flags.n) {
+            if (state.flags.h || lowNib > 9) correction |= 0x06;
+            if (cOut || highNib > 9) {
+              correction |= 0x60;
+              cOut = 1;
+            }
+            rA = (rA - correction) & 0xFF;
+          } else {
+            if (state.flags.h || lowNib > 9) correction |= 0x06;
+            if (cOut || highNib > 9 || (highNib === 9 && lowNib > 9)) {
+              correction |= 0x60;
+              cOut = 1;
+            }
+            rA = (rA + correction) & 0xFF;
+          }
           const s = (rA & 0x80) ? 1 : 0;
           const z = (rA === 0) ? 1 : 0;
-          const h = ((oldA & 0x0F) + (srcVal & 0x0F) > 0x0F) ? 1 : 0;
-          const c = (sum > 0xFF) ? 1 : 0;
-          const pv = (((oldA ^ ~srcVal) & (oldA ^ rA)) & 0x80) ? 1 : 0;
-          state.flags = { s, z, h, pv, n: 0, c };
-          rF = (s << 7) | (z << 6) | (h << 4) | (pv << 2) | c;
+          let p = 0; for (let i = 0; i < 8; i++) if ((rA >> i) & 1) p++;
+          const pv = (p % 2 === 0) ? 1 : 0;
+          state.flags = { ...state.flags, s, z, pv, c: cOut };
+          rF = (s << 7) | (z << 6) | (pv << 2) | cOut;
+        } else if (curItem.mnem === 'BIT') {
+          tCycles = 20;
+          const bStr = (curItem.dest || '').replace(',', '').trim();
+          let bitNum = parseInt(bStr, 10);
+          if (curItem.bytes) {
+            const b = curItem.bytes.trim().split(/\s+/).map(x => parseInt(x, 16));
+            if (b.length >= 4 && (b[0] === 0xDD || b[0] === 0xFD) && b[1] === 0xCB) {
+              bitNum = (b[3] >> 3) & 7;
+            } else if (b.length >= 2 && b[0] === 0xCB) {
+              bitNum = (b[1] >> 3) & 7;
+            }
+          }
+          if (isNaN(bitNum)) bitNum = getImmediateVal(bStr, curItem);
+          const op = (curItem.src || '').trim();
+          let val = 0;
+          const idxAddr = resolveIndexedAddr(op, curItem);
+          if (idxAddr !== null) val = state.memory[idxAddr] || 0;
+          else if (op === '(HL)') val = state.memory[(rH << 8) | rL] || 0;
+          else if (op === 'A') val = rA;
+          else if (op === 'B') val = rB;
+          else if (op === 'C') val = rC;
+          else if (op === 'D') val = rD;
+          else if (op === 'E') val = rE;
+          else if (op === 'H') val = rH;
+          else if (op === 'L') val = rL;
+
+          const isZero = ((val & (1 << bitNum)) === 0) ? 1 : 0;
+          state.flags = { ...state.flags, z: isZero, h: 1, n: 0 };
+          rF = (rF & ~0x52) | (isZero << 6) | (1 << 4);
+        } else if (curItem.mnem === 'SET' || curItem.mnem === 'RES') {
+          tCycles = 23;
+          const isSet = curItem.mnem === 'SET';
+          const bStr = (curItem.dest || '').replace(',', '').trim();
+          let bitNum = parseInt(bStr, 10);
+          if (curItem.bytes) {
+            const b = curItem.bytes.trim().split(/\s+/).map(x => parseInt(x, 16));
+            if (b.length >= 4 && (b[0] === 0xDD || b[0] === 0xFD) && b[1] === 0xCB) {
+              bitNum = (b[3] >> 3) & 7;
+            } else if (b.length >= 2 && b[0] === 0xCB) {
+              bitNum = (b[1] >> 3) & 7;
+            }
+          }
+          if (isNaN(bitNum)) bitNum = getImmediateVal(bStr, curItem);
+          const op = (curItem.src || '').trim();
+          const idxAddr = resolveIndexedAddr(op, curItem);
+          const modifyBit = (v) => isSet ? (v | (1 << bitNum)) : (v & ~(1 << bitNum));
+
+          if (idxAddr !== null) {
+            const oldVal = state.memory[idxAddr] || 0;
+            const newVal = modifyBit(oldVal) & 0xFF;
+            memChanges.push({ addr: idxAddr, oldVal, newVal });
+            state.memory[idxAddr] = newVal;
+          } else if (op === '(HL)') {
+            const addr = (rH << 8) | rL;
+            const oldVal = state.memory[addr] || 0;
+            const newVal = modifyBit(oldVal) & 0xFF;
+            memChanges.push({ addr, oldVal, newVal });
+            state.memory[addr] = newVal;
+          } else if (op === 'A') rA = modifyBit(rA) & 0xFF;
+          else if (op === 'B') rB = modifyBit(rB) & 0xFF;
+          else if (op === 'C') rC = modifyBit(rC) & 0xFF;
+          else if (op === 'D') rD = modifyBit(rD) & 0xFF;
+          else if (op === 'E') rE = modifyBit(rE) & 0xFF;
+          else if (op === 'H') rH = modifyBit(rH) & 0xFF;
+          else if (op === 'L') rL = modifyBit(rL) & 0xFF;
         } else if (curItem.mnem === 'SUB') {
           const operand = (curItem.dest || curItem.src || '').replace(',', '').trim();
           let srcVal = 0;
@@ -570,7 +775,26 @@ function getRctStore() {
             rA = (altAF >> 8) & 0xFF;
             rF = altAF & 0xFF;
             state.regs.af_alt = '0x' + ((tA << 8) | tF).toString(16).padStart(4, '0').toUpperCase();
+            state.flags = {
+              s: (rF >> 7) & 1,
+              z: (rF >> 6) & 1,
+              h: (rF >> 4) & 1,
+              pv: (rF >> 2) & 1,
+              n: (rF >> 1) & 1,
+              c: rF & 1
+            };
           }
+        } else if (curItem.mnem === 'EXX') {
+          tCycles = 4;
+          const bcAlt = parseInt(state.regs.bc_alt.replace('0x', ''), 16) || 0;
+          const deAlt = parseInt(state.regs.de_alt.replace('0x', ''), 16) || 0;
+          const hlAlt = parseInt(state.regs.hl_alt.replace('0x', ''), 16) || 0;
+          state.regs.bc_alt = '0x' + (((rB << 8) | rC) & 0xFFFF).toString(16).padStart(4, '0').toUpperCase();
+          state.regs.de_alt = '0x' + (((rD << 8) | rE) & 0xFFFF).toString(16).padStart(4, '0').toUpperCase();
+          state.regs.hl_alt = '0x' + (((rH << 8) | rL) & 0xFFFF).toString(16).padStart(4, '0').toUpperCase();
+          rB = (bcAlt >> 8) & 0xFF; rC = bcAlt & 0xFF;
+          rD = (deAlt >> 8) & 0xFF; rE = deAlt & 0xFF;
+          rH = (hlAlt >> 8) & 0xFF; rL = hlAlt & 0xFF;
         } else if (curItem.mnem === 'JR') {
           let shouldJump = true;
           let targetCandidate = '';
@@ -1141,7 +1365,7 @@ function getRctStore() {
     }
 
     window.__RCT_STORE__ = {
-      version: 7,
+      version: 8,
       _channel: channel,
       _listeners: listeners,
       getState: () => state,
@@ -1254,12 +1478,322 @@ const COLUMNS = [
 export default function RctCodeViewPane(props = {}) {
   const FBB = window.FBB || {};
   const React = FBB.React || window.React;
-  const { useState, useRef, useEffect } = FBB.hooks || React;
+  const { useState, useRef, useEffect, useMemo } = FBB.hooks || React;
   const [state] = useRctStore();
 
   const program = state.program || [];
   const currentPc = state.currentPc || '0000';
   const activeRowRef = useRef(null);
+
+  // Floating hover tooltip state
+  const [tooltip, setTooltip] = useState(null);
+
+  // Fast symbol table lookup (Labels and EQU constants)
+  const safeUseMemo = useMemo || ((fn) => fn());
+  const symbolTable = safeUseMemo(() => {
+    const map = new Map();
+    for (let i = 0; i < program.length; i++) {
+      const p = program[i];
+      if (p.label) {
+        const clean = p.label.replace(/:+$/, '').trim();
+        if (clean) {
+          let addr = p.addr ? parseInt(p.addr, 16) : null;
+          if (addr !== null && !isNaN(addr)) {
+            map.set(clean, {
+              name: clean,
+              type: 'label',
+              addr: addr,
+              hex: '0x' + addr.toString(16).padStart(4, '0').toUpperCase(),
+              dec: addr,
+              lineIndex: i
+            });
+          }
+        }
+      }
+      if (p.mnem && /\bEQU\b/i.test(p.mnem)) {
+        const equMatch = p.mnem.match(/([A-Za-z_][A-Za-z0-9_]*)\s*:\s*EQU\s+([^;\n\r]+)/i) ||
+                         p.mnem.match(/([A-Za-z_][A-Za-z0-9_]*)\s+EQU\s+([^;\n\r]+)/i);
+        if (equMatch) {
+          const name = equMatch[1].trim();
+          const raw = equMatch[2].trim();
+          let val = null;
+          if (/^0x[0-9a-f]+$/i.test(raw)) val = parseInt(raw, 16);
+          else if (/^\$[0-9a-f]+$/i.test(raw)) val = parseInt(raw.slice(1), 16);
+          else if (/^[0-9]+$/.test(raw)) val = parseInt(raw, 10);
+          map.set(name, {
+            name: name,
+            type: 'equ',
+            raw: raw,
+            value: val,
+            hex: val !== null ? '0x' + (val & 0xFFFF).toString(16).padStart(4, '0').toUpperCase() : null,
+            dec: val,
+            lineIndex: i
+          });
+        }
+      }
+    }
+    return map;
+  }, [program]);
+
+  const REG_SET = safeUseMemo(() => new Set([
+    'A', 'B', 'C', 'D', 'E', 'H', 'L',
+    'AF', 'BC', 'DE', 'HL', 'IX', 'IY', 'SP', 'PC',
+    'I', 'R', "AF'", "BC'", "DE'", "HL'"
+  ]), []);
+
+  const isTokenResolvable = (tok, cellText) => {
+    if (!tok) return false;
+    const clean = tok.replace(/^[(),]+|[(),]+$/g, '').trim();
+    if (!clean) return false;
+    if (symbolTable.has(clean)) return true;
+    if (REG_SET.has(clean.toUpperCase())) return true;
+    if (/^0x[0-9a-f]+$/i.test(clean) || /^\$[0-9a-f]+$/i.test(clean)) return true;
+    if (/^[0-9]+$/.test(clean) && clean.length <= 5) return true;
+    return false;
+  };
+
+  const resolveTokenInfo = (token, cellText, rowItem, colType) => {
+    if (colType === 'addr') {
+      const aNum = parseInt(token, 16);
+      if (isNaN(aNum)) return null;
+      const hex = '0x' + (aNum & 0xFFFF).toString(16).padStart(4, '0').toUpperCase();
+      const memBytes = [];
+      if (state.memory) {
+        for (let i = 0; i < 8; i++) {
+          memBytes.push(state.memory[(aNum + i) & 0xFFFF] || 0);
+        }
+      }
+      const hexDump = memBytes.map(b => b.toString(16).padStart(2, '0').toUpperCase()).join(' ');
+      const asciiDump = memBytes.map(b => (b >= 32 && b <= 126) ? String.fromCharCode(b) : '.').join('');
+      let matchingLabel = null;
+      for (const [k, v] of symbolTable.entries()) {
+        if (v.type === 'label' && v.addr === aNum) {
+          matchingLabel = k;
+          break;
+        }
+      }
+      return {
+        name: hex,
+        category: 'Memory Address',
+        badgeColor: '#06b6d4',
+        hex: hex,
+        dec: aNum,
+        detail: matchingLabel ? `Label: ${matchingLabel}:` : undefined,
+        memPreview: { addrHex: hex, hexDump, asciiDump }
+      };
+    }
+
+    const cleanTok = (token || '').replace(/^[(),]+|[(),]+$/g, '').trim();
+    if (!cleanTok) return null;
+
+    // 0. Indexed Memory Expression: (IX + OFF_PC_L) or (IY - 1)
+    const idxMatch = (cellText || '').match(/^\s*\(\s*(IX|IY)\s*([+-])\s*([^)]+)\s*\),?\s*$/i);
+    if (idxMatch) {
+      const baseReg = idxMatch[1].toUpperCase();
+      const sign = idxMatch[2];
+      const offToken = idxMatch[3].trim();
+      let offVal = 0;
+      let offHex = '0x00';
+      let equDef = null;
+      if (symbolTable.has(offToken)) {
+        const sym = symbolTable.get(offToken);
+        offVal = sym.dec !== null && sym.dec !== undefined ? sym.dec : 0;
+        offHex = sym.hex || '0x00';
+        if (sym.type === 'equ') equDef = `${offToken}: EQU ${sym.raw}`;
+      } else if (/^0x[0-9a-f]+$/i.test(offToken)) {
+        offVal = parseInt(offToken, 16);
+        offHex = offToken;
+      } else if (/^[0-9]+$/.test(offToken)) {
+        offVal = parseInt(offToken, 10);
+        offHex = '0x' + offVal.toString(16).padStart(2, '0').toUpperCase();
+      }
+      const baseHex = (state.regs && state.regs[baseReg.toLowerCase()]) || '0x0000';
+      const baseVal = parseInt(baseHex, 16);
+      const effAddr = (baseVal + (sign === '-' ? -offVal : offVal)) & 0xFFFF;
+      const effHex = '0x' + effAddr.toString(16).padStart(4, '0').toUpperCase();
+      const memVal = (state.memory && state.memory[effAddr]) || 0;
+      return {
+        name: `(${baseReg} ${sign} ${offToken})`,
+        category: 'Indexed Operand',
+        badgeColor: '#f97316',
+        hex: effHex,
+        dec: effAddr,
+        definition: equDef,
+        detail: `Base ${baseReg} = ${baseHex} | Offset = ${sign}${offVal} (${offHex})`,
+        memAtReg: `Memory @ [${effHex}] = 0x${memVal.toString(16).padStart(2, '0').toUpperCase()} (${memVal})`
+      };
+    }
+
+    // 1. Symbol Table match (Label or EQU)
+    if (symbolTable.has(cleanTok)) {
+      const sym = symbolTable.get(cleanTok);
+      if (sym.type === 'label') {
+        const addr = sym.addr;
+        const memBytes = [];
+        if (state.memory) {
+          for (let i = 0; i < 8; i++) {
+            memBytes.push(state.memory[(addr + i) & 0xFFFF] || 0);
+          }
+        }
+        const hexDump = memBytes.map(b => b.toString(16).padStart(2, '0').toUpperCase()).join(' ');
+        const asciiDump = memBytes.map(b => (b >= 32 && b <= 126) ? String.fromCharCode(b) : '.').join('');
+        const targetProg = program.find(p => p.addr && parseInt(p.addr, 16) === addr);
+        let targetCode = null;
+        if (targetProg) {
+          targetCode = `${targetProg.addr}: ${targetProg.mnem || ''} ${targetProg.dest || ''} ${targetProg.src || ''} ${targetProg.comment || ''}`.trim();
+        }
+        return {
+          name: cleanTok,
+          category: 'Label / Target Address',
+          badgeColor: '#38bdf8',
+          hex: sym.hex,
+          dec: sym.dec,
+          targetCode: targetCode,
+          memPreview: { addrHex: sym.hex, hexDump, asciiDump }
+        };
+      } else if (sym.type === 'equ') {
+        return {
+          name: cleanTok,
+          category: 'Constant (EQU)',
+          badgeColor: '#a855f7',
+          hex: sym.hex || 'N/A',
+          dec: sym.dec !== null && sym.dec !== undefined ? sym.dec : 'N/A',
+          definition: `${cleanTok}: EQU ${sym.raw}`
+        };
+      }
+    }
+
+    // 2. 16-bit Register
+    const upper = cleanTok.toUpperCase();
+    const r16Map = {
+      'AF': 'af', 'BC': 'bc', 'DE': 'de', 'HL': 'hl',
+      'IX': 'ix', 'IY': 'iy', 'SP': 'sp', 'PC': 'pc'
+    };
+    if (r16Map[upper]) {
+      const key = r16Map[upper];
+      const valHex = (state.regs && state.regs[key]) || '0x0000';
+      const valNum = parseInt(valHex, 16);
+      const hi = (valNum >> 8) & 0xFF;
+      const lo = valNum & 0xFF;
+      const memVal = (state.memory && state.memory[valNum]) || 0;
+      const flags = state.flags || {};
+      return {
+        name: upper,
+        category: '16-bit Register',
+        badgeColor: '#22c55e',
+        hex: valHex,
+        dec: valNum,
+        detail: upper === 'AF'
+          ? `A: 0x${hi.toString(16).padStart(2, '0').toUpperCase()} | Flags: S=${flags.s || 0} Z=${flags.z || 0} H=${flags.h || 0} C=${flags.c || 0}`
+          : `${upper[0]}: 0x${hi.toString(16).padStart(2, '0').toUpperCase()} | ${upper[1]}: 0x${lo.toString(16).padStart(2, '0').toUpperCase()}`,
+        memAtReg: `[${upper}] = [${valHex}] -> 0x${memVal.toString(16).padStart(2, '0').toUpperCase()} (${memVal})`
+      };
+    }
+
+    // 3. 8-bit Register
+    const r8Map = { 'A': 'af', 'B': 'bc', 'C': 'bc', 'D': 'de', 'E': 'de', 'H': 'hl', 'L': 'hl' };
+    if (r8Map[upper]) {
+      const parentKey = r8Map[upper];
+      const parentVal = parseInt((state.regs && state.regs[parentKey]) || '0', 16);
+      const isHigh = ['A', 'B', 'D', 'H'].includes(upper);
+      const val8 = isHigh ? ((parentVal >> 8) & 0xFF) : (parentVal & 0xFF);
+      return {
+        name: upper,
+        category: '8-bit Register',
+        badgeColor: '#10b981',
+        hex: '0x' + val8.toString(16).padStart(2, '0').toUpperCase(),
+        dec: val8,
+        binary: '0b' + val8.toString(2).padStart(8, '0')
+      };
+    }
+
+    // 4. Immediate Number / Hex
+    let immVal = null;
+    if (/^0x[0-9a-f]+$/i.test(cleanTok)) immVal = parseInt(cleanTok, 16);
+    else if (/^\$[0-9a-f]+$/i.test(cleanTok)) immVal = parseInt(cleanTok.slice(1), 16);
+    else if (/^[0-9]+$/.test(cleanTok)) immVal = parseInt(cleanTok, 10);
+
+    if (immVal !== null) {
+      const hex = '0x' + immVal.toString(16).toUpperCase();
+      return {
+        name: cleanTok,
+        category: 'Immediate Value',
+        badgeColor: '#eab308',
+        hex: hex,
+        dec: immVal,
+        binary: immVal < 256 ? '0b' + immVal.toString(2).padStart(8, '0') : undefined
+      };
+    }
+
+    return null;
+  };
+
+  const handleTokenMouseEnter = (token, cellText, rowItem, e, colType) => {
+    const info = resolveTokenInfo(token, cellText, rowItem, colType);
+    if (!info) return;
+    setTooltip({
+      ...info,
+      x: e.clientX + 16,
+      y: e.clientY + 16
+    });
+  };
+
+  const handleMouseMove = (e) => {
+    setTooltip(prev => {
+      if (!prev) return null;
+      return {
+        ...prev,
+        x: e.clientX + 16,
+        y: e.clientY + 16
+      };
+    });
+  };
+
+  const handleMouseLeave = () => {
+    setTooltip(null);
+  };
+
+  const renderInteractiveCell = (cellText, colType, rowItem, isCur) => {
+    if (!cellText) return '';
+    const text = String(cellText);
+
+    if (colType === 'addr') {
+      const aNum = parseInt(text, 16);
+      if (!isNaN(aNum)) {
+        return React.createElement('span', {
+          title: 'Hover to inspect memory at address',
+          onMouseEnter: (e) => handleTokenMouseEnter(text, text, rowItem, e, 'addr'),
+          onMouseMove: handleMouseMove,
+          onMouseLeave: handleMouseLeave,
+          style: {
+            cursor: 'help',
+            borderBottom: '1px dotted rgba(56, 189, 248, 0.4)'
+          }
+        }, text);
+      }
+      return text;
+    }
+
+    const parts = text.split(/([A-Za-z_][A-Za-z0-9_]*|\$[0-9A-Fa-f]+|0x[0-9A-Fa-f]+|\b[0-9]+\b)/g);
+    return parts.map((part, idx) => {
+      if (!part) return null;
+      const isResolvable = isTokenResolvable(part, text);
+      if (!isResolvable) {
+        return part;
+      }
+      return React.createElement('span', {
+        key: idx,
+        onMouseEnter: (e) => handleTokenMouseEnter(part, text, rowItem, e, colType),
+        onMouseMove: handleMouseMove,
+        onMouseLeave: handleMouseLeave,
+        style: {
+          cursor: 'help',
+          borderBottom: '1px dotted rgba(56, 189, 248, 0.7)',
+          transition: 'all 0.15s ease'
+        }
+      }, part);
+    });
+  };
 
   const getInitialWidths = () => {
     if (props.params && props.params.colWidths) {
@@ -1438,8 +1972,8 @@ export default function RctCodeViewPane(props = {}) {
                 key: idx,
                 style: { background: 'transparent', color: '#38bdf8', fontWeight: 'bold' }
               },
-                React.createElement('td', { style: { padding: '3px 6px', color: '#475569' } }, p.addr || ''),
-                React.createElement('td', { colSpan: 6, style: { padding: '3px 6px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, p.label || '')
+                React.createElement('td', { style: { padding: '3px 6px', color: '#475569' } }, renderInteractiveCell(p.addr || '', 'addr', p, false)),
+                React.createElement('td', { colSpan: 6, style: { padding: '3px 6px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, renderInteractiveCell(p.label || '', 'label', p, false))
               );
             }
             const isCur = p.addr && p.addr === currentPc;
@@ -1452,16 +1986,112 @@ export default function RctCodeViewPane(props = {}) {
                 color: isCur ? '#facc15' : '#cbd5e1'
               }
             },
-              React.createElement('td', { style: { width: `${colWidths.addr}px`, maxWidth: `${colWidths.addr}px`, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', padding: '4px 6px', color: isCur ? '#fde047' : '#64748b' } }, p.addr),
+              React.createElement('td', { style: { width: `${colWidths.addr}px`, maxWidth: `${colWidths.addr}px`, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', padding: '4px 6px', color: isCur ? '#fde047' : '#64748b' } }, renderInteractiveCell(p.addr, 'addr', p, isCur)),
               React.createElement('td', { style: { width: `${colWidths.bytes}px`, maxWidth: `${colWidths.bytes}px`, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', padding: '4px 6px', color: '#94a3b8' } }, p.bytes),
-              React.createElement('td', { style: { width: `${colWidths.label}px`, maxWidth: `${colWidths.label}px`, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', padding: '4px 6px', color: '#38bdf8', fontWeight: 'bold' } }, p.label || ''),
+              React.createElement('td', { style: { width: `${colWidths.label}px`, maxWidth: `${colWidths.label}px`, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', padding: '4px 6px', color: '#38bdf8', fontWeight: 'bold' } }, renderInteractiveCell(p.label || '', 'label', p, isCur)),
               React.createElement('td', { style: { width: `${colWidths.mnem}px`, maxWidth: `${colWidths.mnem}px`, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', padding: '4px 6px', color: isCur ? '#fde047' : '#4ade80', fontWeight: 'bold' } }, p.mnem),
-              React.createElement('td', { style: { width: `${colWidths.dest}px`, maxWidth: `${colWidths.dest}px`, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', padding: '4px 6px', color: isCur ? '#fef08a' : '#facc15' } }, p.dest || ''),
-              React.createElement('td', { style: { width: `${colWidths.src}px`, maxWidth: `${colWidths.src}px`, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', padding: '4px 6px', color: isCur ? '#fed7aa' : '#fb923c' } }, p.src || ''),
+              React.createElement('td', { style: { width: `${colWidths.dest}px`, maxWidth: `${colWidths.dest}px`, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', padding: '4px 6px', color: isCur ? '#fef08a' : '#facc15' } }, renderInteractiveCell(p.dest || '', 'dest', p, isCur)),
+              React.createElement('td', { style: { width: `${colWidths.src}px`, maxWidth: `${colWidths.src}px`, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', padding: '4px 6px', color: isCur ? '#fed7aa' : '#fb923c' } }, renderInteractiveCell(p.src || '', 'src', p, isCur)),
               React.createElement('td', { style: { width: `${colWidths.comment}px`, maxWidth: `${colWidths.comment}px`, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', padding: '4px 6px', color: '#64748b', fontStyle: 'italic' } }, p.comment || '')
             );
           })
         )
+      )
+    ),
+
+    // Floating Symbol & Operand Inspector Tooltip
+    tooltip && React.createElement('div', {
+      style: {
+        position: 'fixed',
+        left: `${typeof window !== 'undefined' && tooltip.x + 320 > window.innerWidth ? Math.max(10, tooltip.x - 340) : tooltip.x}px`,
+        top: `${typeof window !== 'undefined' && tooltip.y + 220 > window.innerHeight ? Math.max(10, tooltip.y - 230) : tooltip.y}px`,
+        zIndex: 9999,
+        pointerEvents: 'none',
+        backgroundColor: '#0f172a',
+        border: `1px solid ${tooltip.badgeColor || '#38bdf8'}`,
+        boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.7), 0 8px 10px -6px rgba(0, 0, 0, 0.7)',
+        borderRadius: '6px',
+        padding: '8px 12px',
+        fontSize: '11px',
+        lineHeight: '1.4',
+        fontFamily: 'monospace',
+        color: '#e2e8f0',
+        maxWidth: '340px',
+        minWidth: '240px',
+        boxSizing: 'border-box'
+      }
+    },
+      React.createElement('div', {
+        style: {
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: '8px',
+          borderBottom: '1px solid #1e293b',
+          paddingBottom: '4px',
+          marginBottom: '6px'
+        }
+      },
+        React.createElement('span', { style: { fontWeight: 'bold', fontSize: '12px', color: '#f8fafc' } }, tooltip.name),
+        React.createElement('span', {
+          style: {
+            fontSize: '9px',
+            fontWeight: 'bold',
+            padding: '1px 6px',
+            borderRadius: '3px',
+            color: '#fff',
+            backgroundColor: tooltip.badgeColor || '#38bdf8'
+          }
+        }, tooltip.category)
+      ),
+      tooltip.hex && React.createElement('div', { style: { display: 'flex', justifyContent: 'space-between', marginBottom: '2px' } },
+        React.createElement('span', { style: { color: '#94a3b8' } }, 'Resolved Value:'),
+        React.createElement('span', { style: { color: '#facc15', fontWeight: 'bold' } }, `${tooltip.hex} (${tooltip.dec})`)
+      ),
+      tooltip.binary && React.createElement('div', { style: { display: 'flex', justifyContent: 'space-between', marginBottom: '2px' } },
+        React.createElement('span', { style: { color: '#94a3b8' } }, 'Binary:'),
+        React.createElement('span', { style: { color: '#38bdf8' } }, tooltip.binary)
+      ),
+      tooltip.definition && React.createElement('div', {
+        style: {
+          color: '#c084fc',
+          fontStyle: 'italic',
+          marginTop: '4px',
+          borderTop: '1px dashed #334155',
+          paddingTop: '4px'
+        }
+      }, tooltip.definition),
+      tooltip.detail && React.createElement('div', {
+        style: { color: '#94a3b8', fontSize: '10px', marginTop: '3px' }
+      }, tooltip.detail),
+      tooltip.memAtReg && React.createElement('div', {
+        style: { color: '#4ade80', fontSize: '10px', marginTop: '3px' }
+      }, tooltip.memAtReg),
+      tooltip.targetCode && React.createElement('div', {
+        style: {
+          marginTop: '4px',
+          borderTop: '1px dashed #334155',
+          paddingTop: '4px',
+          color: '#fde047',
+          fontSize: '10px'
+        }
+      },
+        React.createElement('span', { style: { color: '#94a3b8' } }, 'Target: '),
+        tooltip.targetCode
+      ),
+      tooltip.memPreview && React.createElement('div', {
+        style: {
+          marginTop: '6px',
+          borderTop: '1px solid #1e293b',
+          paddingTop: '4px',
+          background: '#090d16',
+          padding: '4px 6px',
+          borderRadius: '4px'
+        }
+      },
+        React.createElement('div', { style: { color: '#94a3b8', fontSize: '9px', marginBottom: '2px' } }, `Memory @ [${tooltip.memPreview.addrHex}]:`),
+        React.createElement('div', { style: { color: '#38bdf8', fontSize: '10px', letterSpacing: '0.5px' } }, tooltip.memPreview.hexDump),
+        React.createElement('div', { style: { color: '#a7f3d0', fontSize: '10px', marginTop: '2px' } }, `ASCII: "${tooltip.memPreview.asciiDump}"`)
       )
     )
   );

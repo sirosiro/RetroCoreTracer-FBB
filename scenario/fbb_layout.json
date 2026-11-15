@@ -191,11 +191,11 @@
             "params": {
                 "_componentName": "rct-code-view",
                 "colWidths": {
-                    "addr": 48,
-                    "bytes": 58,
-                    "label": 47,
+                    "addr": 47,
+                    "bytes": 81,
+                    "label": 28,
                     "mnem": 61,
-                    "dest": 46,
+                    "dest": 101,
                     "src": 130,
                     "comment": 280
                 }
@@ -243,7 +243,7 @@
             "title": "RCT Stack"
         }
     },
-    "activeGroup": "3",
+    "activeGroup": "10",
     "_fbb_pane_state": {
         "tracer": {
             "selectedGroup": "ALL",

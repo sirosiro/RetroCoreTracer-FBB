@@ -1,5 +1,7 @@
 # RetroCoreTracer for F-BB (RetroCoreTracer-FBB)
 
+🌐 [English (Google Translate)](https://translate.google.com/translate?sl=ja&tl=en&u=https://github.com/sirosiro/RetroCoreTracer-FBB)
+
 **RetroCoreTracer-FBB** は、[FPGA-BoardlessBench (F-BB)](https://github.com/sirosiro/FPGA-BoardlessBench) の **PPA 5.1 (Peripheral Plugin Architecture)** および **DPPA v1.0 (Dashboard Pane Plugin Architecture)** を実証・ドッグフーディングするために開発された、外部独立型の Z80 CPU RTL ビジュアルトレーサー＆スタジオプラグインです。
 
 クリーンルーム（完全スクラッチ）から設計された Verilog-2001 Z80 CPU コア、C++ サイクルシミュレータ、決定論的タイムトラベル（Undo / Backstepping）エンジン、Z80 アセンブラ (`.asm`) 直接読込＆リスティング連動 Code View エンジン、動的 Intel HEX デコーダ、および Dockview に自由に配置可能な 7 個の独立した動的 UI ペイン（DPPA）を提供します。F-BB 本体のコードを 1 行も変更することなく、完全なプラグアンドプレイを実現しています。
@@ -41,8 +43,8 @@
    - 従来の `.hex` 指定時も自動で構造化逆アセンブラ (`scripts/hex_to_program.py`) が起動する 100% の後方互換性を保証。
    - ラベル優先検索・16進絶対アドレスパース・相対オフセット厳密計算 `(PC + 命令長 + offset) & 0xFFFF` を備えた高精度分岐エンジン（`JR`, `JP`, `DJNZ`, `CALL`, `RET`）。
    - スタック操作（`PUSH`, `POP`）および ALU 演算（`ADD`, `SUB`, `INC`, `DEC`）の完全なフラグ・レジスタ連動。
-   - 8bit/16bit 間接 `LD`（`LD A, (HL)`, `LD (DE), A`, `LD (BC), A` 等）、16bit レジスタペア `INC/DEC`（`HL, DE, BC, SP, IX, IY`、フラグ不変の Z80 規約準拠）、16bit 減算・比較（`SBC HL, DE`）、間接演算（`CP (HL)`, `INC (HL)`, `DEC (HL)`, `AND/OR/XOR (HL)`）、レジスタ交換（`EX DE, HL`, `EX AF, AF`'）、スタック復元（`POP AF` による全フラグビット完全復元）など実践的な命令群を完全サポート。
-   - アルゴリズム検証用の実践的なテストプログラム `examples/rle_codec.asm`（ランレングス圧縮・展開・自己検証）を完全サポート。
+   - 8bit/16bit 間接 `LD`（`LD A, (HL)`, `LD (DE), A`, `LD (BC), A` 等）、インデックス相対アドレッシング（`LD (IX + d), r`, `LD r, (IX + d)`, 負のインデックス `LD A, (IY - 1)` 等）、16bit レジスタペア `INC/DEC`（`HL, DE, BC, SP, IX, IY`、フラグ不変の Z80 規約準拠）、16bit 加減算（`ADC HL, ss`, `ADD HL, ss`, `SBC HL, ss`）、ビット操作命令（`BIT b, (IX + d)`, `SET b, (IX + d)`, `RES b, (IX + d)`）、10進補正（`DAA`）、裏レジスタ交換（`EX DE, HL`, `EX AF, AF'`, `EXX`）、間接分岐・トランポリン（`JP (HL)`）、スタック復元（`POP AF` による全フラグビット完全復元）など実践的な命令群を完全サポート。
+   - アルゴリズム検証用プログラム `examples/rle_codec.asm`（ランレングス圧縮・展開・自己検証）および `examples/edge-case_stress_test.asm`（ジャンプテーブル、インデックス相対、ビット操作、裏レジスタ、DAA を網羅した自己検証 VM ストレステスト）を完全サポート。
 
 6. **F-BB コア非侵襲アーキテクチャ (Zero Core Modification)**:
    - `~/.fbb/plugins/fbb-plugin-rct-z80` のシンボリックリンクにより F-BB 側にプラグインとして自動登録。
@@ -161,6 +163,7 @@ RetroCoreTracer-FBB/
 └── examples/                   # テスト用 Z80 プログラム群 (ASM / Intel HEX)
     ├── fibonacci.asm           # フィボナッチ数列計算デモ アセンブラソース (設計メモ・コメント付き)
     ├── rle_codec.asm           # ランレングス圧縮 (RLE) エンコード/デコード & 自己検証テスト (ASM版)
+    ├── edge-case_stress_test.asm # Z80 ミニバイトコードVM & 高度エッジケース包括ストレステスト (自己検証版)
     ├── fibonacci.hex           # フィボナッチ数列計算デモ (ループ・相対ジャンプ)
     ├── z80_loop_test.hex       # DJNZ ループカウンタ検証テスト
     ├── z80_stack_test.hex      # PUSH/POP/CALL/RET スタック呼出検証テスト
@@ -179,22 +182,22 @@ RetroCoreTracer-FBB/
 -----------------------------------------------------------------------------------
 Language                         files          blank        comment           code
 -----------------------------------------------------------------------------------
-JavaScript                           8            570            127           9824
+JavaScript                           8            591            127          11371
 Verilog-SystemVerilog                4            274            128           2518
 Python                               4            116             83           1396
 C++                                  2             52             12            577
-Markdown                             4            119              0            516
+Markdown                             4            121              0            525
 JSON                                10              0              0            432
 C/C++ Header                         5             48             11            285
-Assembly                             2             35             53            118
+Assembly                             3             74            113            279
 Bourne Shell                         1             11              6            105
 CMake                                2             11              0             60
 C                                    1             11              1             59
 -----------------------------------------------------------------------------------
-SUM:                                43           1247            421          15890
+SUM:                                44           1309            481          17607
 -----------------------------------------------------------------------------------
 ```
-*(ドキュメント Markdown 等を含む総行数は 17,558 行)*
+*(ドキュメント Markdown 等を含む総行数は 19,397 行)*
 
 ---
 
@@ -260,7 +263,10 @@ fbb lab scenario/ examples/fibonacci.asm
 # 2. ランレングス圧縮 (RLE) エンコード/デコード＆自己検証テスト (.asm) を指定して起動
 fbb lab scenario/ examples/rle_codec.asm
 
-# 3. 任意の HEX ファイル（ループテスト）を指定して起動 (従来の HEX も完全サポート)
+# 3. Z80 高度エッジケース・自己検証 VM ストレステスト (.asm) を指定して起動
+fbb lab scenario/ examples/edge-case_stress_test.asm
+
+# 4. 任意の HEX ファイル（ループテスト）を指定して起動 (従来の HEX も完全サポート)
 fbb lab scenario/ examples/z80_loop_test.hex
 
 # 4. スタック・サブルーチン呼出テストを指定して起動
