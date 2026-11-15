@@ -3,7 +3,7 @@ export const minApiVersion = 1;
 
 function getRctStore() {
   if (typeof window === 'undefined') return null;
-  if (!window.__RCT_STORE__ || (window.__RCT_STORE__.version || 0) < 8) {
+  if (!window.__RCT_STORE__ || (window.__RCT_STORE__.version || 0) < 11) {
     if (typeof window !== 'undefined' && window.__RCT_STORE__ && window.__RCT_STORE__._channel) {
       try { window.__RCT_STORE__._channel.close(); } catch (e) {}
     }
@@ -63,9 +63,7 @@ function getRctStore() {
         mreq: false, iorq: false, rd: false, wr: false, m1: false,
         active: false
       },
-      breakpoints: [
-        { id: 1, type: 'PC_MATCH', condition: '== 0x0003 (EX_TEST)', status: 'Active' }
-      ],
+      breakpoints: [],
       bpType: 'PC_MATCH',
       bpValue: '',
       program: initialProgram,
@@ -107,6 +105,27 @@ function getRctStore() {
     }
 
     let runTimer = null;
+    let turboRaf = null;
+    let lastTurboUiTime = 0;
+    let lastTurboFlushTime = 0;
+    let turboStartHistoryLen = 0;
+    let skipNextSingleSync = false;
+
+    function stopRunning() {
+      state.isRunning = false;
+      if (runTimer) {
+        clearInterval(runTimer);
+        runTimer = null;
+      }
+      if (turboRaf) {
+        if (typeof cancelAnimationFrame !== 'undefined') {
+          cancelAnimationFrame(turboRaf);
+        } else {
+          clearTimeout(turboRaf);
+        }
+        turboRaf = null;
+      }
+    }
 
     // F-BB Core Dashboard Time-Travel Sync Channel
     const fbbSyncChannel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('fbb_dashboard_sync') : null;
@@ -182,12 +201,53 @@ function getRctStore() {
       });
     }
 
+    function syncMmioBatchToFbb(steps) {
+      if (state.isTimeTraveling) return;
+      if (typeof window === 'undefined' || !window.FBB || !window.FBB.socket) return;
+      if (!Array.isArray(steps) || steps.length === 0) return;
+
+      const parse16 = (v) => parseInt((v || '0').replace('0x', ''), 16) || 0;
+      const parseSp = (v) => parseInt((v || '0').replace('0x', ''), 16) || 0;
+
+      const batch = steps.map((h, idx) => {
+        const flagsVal = (h.flags.s << 7) | (h.flags.z << 6) | (h.flags.h << 4) | (h.flags.pv << 2) | (h.flags.n << 1) | h.flags.c;
+        const isLast = (idx === steps.length - 1);
+        return {
+          CTRL: 1,
+          STATUS: isLast ? (state.isRunning ? 1 : 0) : 1,
+          CMD: 0,
+          CYCLES: h.cycleCount,
+          PC: parseInt(h.currentPc, 16) || 0,
+          SP: parseSp(h.regs.sp),
+          AF: parse16(h.regs.af),
+          BC: parse16(h.regs.bc),
+          DE: parse16(h.regs.de),
+          HL: parse16(h.regs.hl),
+          IX: parse16(h.regs.ix),
+          IY: parse16(h.regs.iy),
+          FLAGS: flagsVal,
+          AF_ALT: parse16(h.regs.af_alt),
+          BC_ALT: parse16(h.regs.bc_alt),
+          DE_ALT: parse16(h.regs.de_alt),
+          HL_ALT: parse16(h.regs.hl_alt)
+        };
+      });
+
+      window.FBB.socket.emit('mmio:write_batch', {
+        deviceName: 'vfpga_z80',
+        batch
+      });
+    }
+
     function notify(origin) {
       listeners.forEach(l => {
-        try { l(state); } catch (e) { console.error(e); }
+        try { l(state, origin); } catch (e) { console.error(e); }
       });
       if (origin === 'local' && !state.isTimeTraveling) {
-        syncMmioToFbb();
+        if (!skipNextSingleSync) {
+          syncMmioToFbb();
+        }
+        skipNextSingleSync = false;
         if (channel) {
           const lastHist = state.history[state.history.length - 1];
           channel.postMessage({
@@ -198,6 +258,18 @@ function getRctStore() {
             }
           });
         }
+      } else if (origin === 'turbo_tick' && channel) {
+        channel.postMessage({
+          type: 'TURBO_TICK',
+          payload: {
+            regs: state.regs,
+            flags: state.flags,
+            currentPc: state.currentPc,
+            stepCount: state.stepCount,
+            cycleCount: state.cycleCount,
+            isRunning: state.isRunning
+          }
+        });
       }
     }
 
@@ -207,8 +279,14 @@ function getRctStore() {
     }
 
     // Accurate Z80 Instruction Stepping Engine
-    function step() {
-      if (state.isTimeTraveling) return;
+    function step(silent = false) {
+      const isSilent = typeof silent === 'boolean' ? silent : false;
+      if (state.isTimeTraveling) return false;
+
+      // History cap to prevent OOM in long runs (keeps last 50,000 steps)
+      if (state.history.length >= 50000) {
+        state.history.shift();
+      }
 
       const memChanges = [];
       state.history.push({
@@ -296,25 +374,48 @@ const resolveIndexedAddr = (str, item) => {
       const resolveJumpTarget = (item, candidate) => {
         const candidates = [candidate, item && item.dest, item && item.src].filter(Boolean);
         for (let cand of candidates) {
-          const cleaned = cand.replace('$', '').replace('(', '').replace(')', '').replace(',', '').trim();
+          const rawTrimmed = cand.replace(/[(),]/g, '').trim();
+
           // 1. Try finding by label in program
           const match = state.program.find(p => {
             if (!p.label || !p.addr) return false;
             const l = p.label.replace(':', '').trim();
-            return l.toLowerCase() === cleaned.toLowerCase();
+            return l.toLowerCase() === rawTrimmed.toLowerCase();
           });
           if (match) {
             const a = parseInt(match.addr, 16);
             if (!isNaN(a)) return a;
           }
-          // 2. Try hex address (e.g. 0005, 0x0005, $0005)
-          const immA = parseVal(cleaned);
-          if (!isNaN(immA)) return immA;
-          if (/^(0x)?[0-9a-fA-F]{1,4}$/i.test(cleaned)) {
-            const a = parseInt(cleaned.replace(/^0x/i, ''), 16);
+
+          // 2. Explicit hex formats (bash055, 0x0055, 0055h)
+          if (rawTrimmed.startsWith('$')) {
+            const a = parseInt(rawTrimmed.slice(1), 16);
             if (!isNaN(a)) return a;
           }
-          // 3. Try relative offset e.g. (-5), +5, -5
+          if (/^0x[0-9a-fA-F]+$/i.test(rawTrimmed)) {
+            const a = parseInt(rawTrimmed, 16);
+            if (!isNaN(a)) return a;
+          }
+          if (/^[0-9a-fA-F]+[hH]$/i.test(rawTrimmed)) {
+            const a = parseInt(rawTrimmed.slice(0, -1), 16);
+            if (!isNaN(a)) return a;
+          }
+
+          // 3. Try instruction opcode bytes if available (CALL nn / JP nn has 3 bytes: OP, lo, hi)
+          if (item && item.bytes && (item.mnem === 'CALL' || item.mnem === 'JP')) {
+            const b = item.bytes.trim().split(/\s+/).map(x => parseInt(x, 16)).filter(x => !isNaN(x));
+            if (b.length >= 3) {
+              return (b[2] << 8) | b[1];
+            }
+          }
+
+          // 4. Try 3 or 4-digit hex address (e.g. 0055, 0100)
+          if (/^[0-9a-fA-F]{3,4}$/i.test(rawTrimmed)) {
+            const a = parseInt(rawTrimmed, 16);
+            if (!isNaN(a)) return a;
+          }
+
+          // 5. Try relative offset e.g. (-5), +5, -5 (for JR and DJNZ)
           const offMatch = cand.match(/^[\(\[]?\s*([+-]?\d+)\s*[\)\]]?$/);
           if (offMatch) {
             const offset = parseInt(offMatch[1], 10);
@@ -322,6 +423,10 @@ const resolveIndexedAddr = (str, item) => {
             const basePc = item && item.addr ? parseInt(item.addr, 16) : pcNum;
             return (basePc + instrLen + offset) & 0xFFFF;
           }
+
+          // 6. Generic parseVal fallback
+          const immA = parseVal(rawTrimmed);
+          if (!isNaN(immA)) return immA;
         }
         return NaN;
       };
@@ -1186,13 +1291,11 @@ const resolveIndexedAddr = (str, item) => {
 
       // Check if breakpoint hit at new PC
       const hitBp = checkBreakpoints(nextPcHex);
+      const isHalted = (curItem && curItem.mnem === 'HALT');
+
       if (hitBp) {
         if (state.isRunning) {
-          if (runTimer) {
-            clearInterval(runTimer);
-            runTimer = null;
-          }
-          state.isRunning = false;
+          stopRunning();
         }
         state.hitBpId = hitBp.id;
         state.statusMsg = `BP HIT: 0x${nextPcHex}`;
@@ -1201,12 +1304,82 @@ const resolveIndexedAddr = (str, item) => {
         state.statusMsg = null;
       }
 
-      notify('local');
+      if (isHalted && state.isRunning) {
+        stopRunning();
+      }
 
-      setTimeout(() => {
-        state.bus = { ...state.bus, active: false };
+      if (!isSilent) {
         notify('local');
-      }, 200);
+        setTimeout(() => {
+          state.bus = { ...state.bus, active: false };
+          notify('local');
+        }, 200);
+      }
+
+      return isHalted || !!hitBp;
+    }
+
+    function runTurboChunk() {
+      if (!state.isRunning) return;
+
+      const BATCH_SIZE = 1000;
+      const TIME_SLICE_MS = 20; // 20ms execution budget per slice (~50 FPS)
+      const startT = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+
+      let count = 0;
+      let shouldStop = false;
+
+      while (count < BATCH_SIZE && !shouldStop && state.isRunning) {
+        const hit = step(true); // silent = true: zero DOM/cloning overhead
+        count++;
+        if (hit) {
+          shouldStop = true;
+          break;
+        }
+        if (count % 100 === 0) {
+          const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+          if (now - startT >= TIME_SLICE_MS) {
+            break;
+          }
+        }
+      }
+
+      if (shouldStop || !state.isRunning) {
+        stopRunning();
+        const newSteps = state.history.slice(turboStartHistoryLen);
+        if (newSteps.length > 0) {
+          syncMmioBatchToFbb(newSteps.slice(-500));
+          turboStartHistoryLen = state.history.length;
+          skipNextSingleSync = true;
+        }
+        notify('local'); // Full synchronization to all panes upon stop/breakpoint/HALT
+        return;
+      }
+
+      // Throttled UI update (~30ms) for Registers & Controller
+      const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+      if (now - lastTurboUiTime >= 30) {
+        lastTurboUiTime = now;
+        notify('turbo_tick');
+      }
+
+      // Periodic stream to F-BB Tracer every 300ms during long Turbo runs
+      if (now - lastTurboFlushTime >= 300) {
+        lastTurboFlushTime = now;
+        const newSteps = state.history.slice(turboStartHistoryLen);
+        if (newSteps.length > 0) {
+          syncMmioBatchToFbb(newSteps.slice(-500));
+          turboStartHistoryLen = state.history.length;
+        }
+      }
+
+      if (state.isRunning) {
+        if (typeof requestAnimationFrame !== 'undefined') {
+          turboRaf = requestAnimationFrame(runTurboChunk);
+        } else {
+          turboRaf = setTimeout(runTurboChunk, 0);
+        }
+      }
     }
 
     function backstep() {
@@ -1229,10 +1402,7 @@ const resolveIndexedAddr = (str, item) => {
     }
 
     function reset() {
-      if (runTimer) {
-        clearInterval(runTimer);
-        runTimer = null;
-      }
+      stopRunning();
       state.isRunning = false;
       state.stepCount = 0;
       state.cycleCount = 0;
@@ -1265,33 +1435,54 @@ const resolveIndexedAddr = (str, item) => {
         }
       }
       state.history = [];
+      turboStartHistoryLen = 0;
+      if (typeof window !== 'undefined' && window.FBB && window.FBB.socket) {
+        window.FBB.socket.emit('trace-history-clear');
+      }
       notify('local');
     }
 
     function setRunning(running) {
       if (state.isTimeTraveling && running) return;
+      stopRunning();
       state.isRunning = running;
-      if (runTimer) {
-        clearInterval(runTimer);
-        runTimer = null;
-      }
+
       if (running) {
-        runTimer = setInterval(() => {
-          step();
-        }, state.clockSpeed);
+        turboStartHistoryLen = state.history.length;
+        lastTurboFlushTime = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+        if (state.clockSpeed === 0) {
+          lastTurboUiTime = lastTurboFlushTime;
+          notify('local'); // Update button to 'Stop' immediately
+          if (typeof requestAnimationFrame !== 'undefined') {
+            turboRaf = requestAnimationFrame(runTurboChunk);
+          } else {
+            turboRaf = setTimeout(runTurboChunk, 0);
+          }
+        } else {
+          runTimer = setInterval(() => {
+            step(false);
+          }, state.clockSpeed);
+          notify('local');
+        }
+      } else {
+        const newSteps = state.history.slice(turboStartHistoryLen);
+        if (newSteps.length > 0) {
+          syncMmioBatchToFbb(newSteps.slice(-500));
+          turboStartHistoryLen = state.history.length;
+          skipNextSingleSync = true;
+        }
+        notify('local');
       }
-      notify('local');
     }
 
     function setClockSpeed(speed) {
       state.clockSpeed = speed;
       if (state.isRunning) {
-        if (runTimer) clearInterval(runTimer);
-        runTimer = setInterval(() => {
-          step();
-        }, speed);
+        setRunning(false);
+        setRunning(true);
+      } else {
+        notify('local');
       }
-      notify('local');
     }
 
     function setZoom(z) {
@@ -1360,12 +1551,21 @@ const resolveIndexedAddr = (str, item) => {
             }
           }
           notify('remote');
+        } else if (e.data && e.data.type === 'TURBO_TICK') {
+          const { regs, flags, currentPc, stepCount, cycleCount, isRunning } = e.data.payload;
+          state.regs = regs;
+          state.flags = flags;
+          state.currentPc = currentPc;
+          state.stepCount = stepCount;
+          state.cycleCount = cycleCount;
+          state.isRunning = isRunning;
+          notify('turbo_tick');
         }
       };
     }
 
     window.__RCT_STORE__ = {
-      version: 8,
+      version: 11,
       _channel: channel,
       _listeners: listeners,
       getState: () => state,
@@ -1374,9 +1574,9 @@ const resolveIndexedAddr = (str, item) => {
         return () => listeners.delete(fn);
       },
       actions: {
-        step,
-        backstep,
-        reset,
+        step: () => step(false),
+        backstep: () => backstep(),
+        reset: () => reset(),
         setRunning,
         setClockSpeed,
         setZoom,
@@ -1399,7 +1599,7 @@ function useRctStore() {
 
   useEffect(() => {
     if (!store) return;
-    return store.subscribe(newState => setState({ ...newState }));
+    return store.subscribe((newState, origin) => { if (origin === 'turbo_tick') return; setState({ ...newState }); });
   }, [store]);
 
   return [state, store ? store.actions : {}];
@@ -1457,6 +1657,7 @@ const S = {
 
 const DEFAULT_COL_WIDTHS = {
   addr: 48,
+  bp: 22,
   bytes: 58,
   label: 140,
   mnem: 68,
@@ -1467,6 +1668,7 @@ const DEFAULT_COL_WIDTHS = {
 
 const COLUMNS = [
   { key: 'addr', label: 'Addr' },
+  { key: 'bp', label: '' },
   { key: 'bytes', label: 'Bytes' },
   { key: 'label', label: 'Label' },
   { key: 'mnem', label: 'Mnemonic' },
@@ -1479,14 +1681,118 @@ export default function RctCodeViewPane(props = {}) {
   const FBB = window.FBB || {};
   const React = FBB.React || window.React;
   const { useState, useRef, useEffect, useMemo } = FBB.hooks || React;
-  const [state] = useRctStore();
+  const [state, actions] = useRctStore();
+
+  const findPcBreakpoint = (breakpoints, addrStr) => {
+    if (!breakpoints || !addrStr) return null;
+    const targetHex = addrStr.replace(/^0x/i, '').padStart(4, '0').toUpperCase();
+    return breakpoints.find(bp => {
+      if (bp.type !== 'PC_MATCH') return false;
+      const match = bp.condition.match(/(?:0x)?([0-9a-fA-F]{1,4})/);
+      return match && match[1].padStart(4, '0').toUpperCase() === targetHex;
+    });
+  };
+
+  const togglePcBreakpoint = (addrStr) => {
+    if (!addrStr || !actions) return;
+    const targetHex = addrStr.replace(/^0x/i, '').padStart(4, '0').toUpperCase();
+    const existing = findPcBreakpoint(state.breakpoints, targetHex);
+    if (existing) {
+      if (typeof actions.removeBreakpoint === 'function') {
+        actions.removeBreakpoint(existing.id);
+      }
+    } else {
+      if (typeof actions.addBreakpoint === 'function') {
+        actions.addBreakpoint('PC_MATCH', `0x${targetHex}`);
+      }
+    }
+  };
+
+  // Keyboard Shortcuts: Enter for Step, Shift+Enter for Backstep, 'r' for Reset, 'g' for Run
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const handleKeyDown = (e) => {
+      const tag = e.target?.tagName?.toLowerCase();
+      if (tag === 'input' || tag === 'textarea' || e.target?.isContentEditable) {
+        return;
+      }
+      // Never intercept browser system shortcuts (e.g. Ctrl+R, Cmd+R for reload)
+      if (e.ctrlKey || e.metaKey || e.altKey) {
+        return;
+      }
+
+      const store = window.__RCT_STORE__;
+      if (!store || !store.actions) return;
+      const curState = store.getState();
+      if (curState.isTimeTraveling) return;
+
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        if (e.shiftKey) {
+          if (typeof store.actions.backstep === 'function') {
+            store.actions.backstep();
+          }
+        } else {
+          if (typeof store.actions.step === 'function') {
+            store.actions.step();
+          }
+        }
+      } else if (e.key === 'r' || e.key === 'R') {
+        e.preventDefault();
+        if (typeof store.actions.reset === 'function') {
+          store.actions.reset();
+        }
+      } else if (e.key === 'g' || e.key === 'G') {
+        e.preventDefault();
+        if (typeof store.actions.setRunning === 'function') {
+          store.actions.setRunning(!curState.isRunning);
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   const program = state.program || [];
   const currentPc = state.currentPc || '0000';
   const activeRowRef = useRef(null);
+  const tableContainerRef = useRef(null);
 
   // Floating hover tooltip state
   const [tooltip, setTooltip] = useState(null);
+
+  // Configurable scroll margin (remaining lines kept visible ahead/behind cursor)
+  const getInitialScrollMargin = () => {
+    if (props.params && typeof props.params.scrollMargin === 'number') {
+      return props.params.scrollMargin;
+    }
+    if (typeof localStorage !== 'undefined') {
+      try {
+        const saved = parseInt(localStorage.getItem('fbb_rct_code_view_scroll_margin'), 10);
+        if (!isNaN(saved) && saved >= 0 && saved <= 30) {
+          return saved;
+        }
+      } catch (e) {}
+    }
+    return 5;
+  };
+
+  const [scrollMargin, setScrollMargin] = useState(getInitialScrollMargin);
+
+  const saveScrollMargin = (newMargin) => {
+    if (typeof localStorage !== 'undefined') {
+      try {
+        localStorage.setItem('fbb_rct_code_view_scroll_margin', String(newMargin));
+      } catch (e) {}
+    }
+    if (props.api && typeof props.api.updateParameters === 'function') {
+      try {
+        props.api.updateParameters({ ...(props.params || {}), scrollMargin: newMargin });
+      } catch (e) {}
+    }
+  };
 
   // Fast symbol table lookup (Labels and EQU constants)
   const safeUseMemo = useMemo || ((fn) => fn());
@@ -1872,10 +2178,49 @@ export default function RctCodeViewPane(props = {}) {
   };
 
   useEffect(() => {
-    if (activeRowRef.current) {
-      activeRowRef.current.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    if (!activeRowRef.current || !tableContainerRef.current) return;
+    const container = tableContainerRef.current;
+    const activeRow = activeRowRef.current;
+
+    const thead = container.querySelector('thead');
+    const theadHeight = thead ? thead.offsetHeight : 26;
+    const rowHeight = activeRow.offsetHeight || 24;
+    const clientHeight = container.clientHeight;
+    const scrollHeight = container.scrollHeight;
+    const currentScrollTop = container.scrollTop;
+
+    const maxScrollTop = Math.max(0, scrollHeight - clientHeight);
+    const visibleHeight = Math.max(rowHeight, clientHeight - theadHeight);
+
+    // Limit margin so top and bottom margins never overlap even in small panes
+    const maxMarginPx = Math.max(0, Math.floor((visibleHeight - rowHeight) / 2));
+    const marginPx = Math.min(scrollMargin * rowHeight, maxMarginPx);
+
+    const rowTop = activeRow.offsetTop;
+    const rowBottom = rowTop + rowHeight;
+
+    const minVisibleTop = currentScrollTop + theadHeight + marginPx;
+    const maxVisibleBottom = currentScrollTop + clientHeight - marginPx;
+
+    let targetScrollTop = currentScrollTop;
+
+    if (rowTop < minVisibleTop) {
+      targetScrollTop = rowTop - theadHeight - marginPx;
+    } else if (rowBottom > maxVisibleBottom) {
+      targetScrollTop = rowBottom - clientHeight + marginPx;
     }
-  }, [currentPc]);
+
+    // Clamp to [0, maxScrollTop] so PC reaches top edge (PC=0) and bottom edge (HALT) seamlessly
+    targetScrollTop = Math.max(0, Math.min(maxScrollTop, targetScrollTop));
+
+    if (Math.abs(targetScrollTop - currentScrollTop) > 1) {
+      const isFast = state.isRunning || Math.abs(targetScrollTop - currentScrollTop) > 300;
+      container.scrollTo({
+        top: targetScrollTop,
+        behavior: isFast ? 'auto' : 'smooth'
+      });
+    }
+  }, [currentPc, scrollMargin, state.isRunning]);
 
   const totalTableWidth = Object.values(colWidths).reduce((a, b) => a + b, 0);
 
@@ -1902,7 +2247,47 @@ export default function RctCodeViewPane(props = {}) {
             fontSize: '10px',
             cursor: 'pointer'
           }
-        }, 'Reset Cols')
+        }, 'Reset Cols'),
+        React.createElement('div', {
+          style: {
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '4px',
+            background: '#0f172a',
+            border: '1px solid #334155',
+            borderRadius: '3px',
+            padding: '1px 5px',
+            fontSize: '10px',
+            color: '#94a3b8'
+          },
+          title: 'Remaining lines kept visible ahead/behind cursor before scrolling begins (0: edge scroll, 1-20: margin)'
+        },
+          React.createElement('span', null, 'Margin:'),
+          React.createElement('input', {
+            type: 'number',
+            min: 0,
+            max: 20,
+            value: scrollMargin,
+            onChange: (e) => {
+              const val = Math.max(0, Math.min(20, parseInt(e.target.value, 10) || 0));
+              setScrollMargin(val);
+              saveScrollMargin(val);
+            },
+            style: {
+              width: '28px',
+              background: '#1e293b',
+              color: '#38bdf8',
+              border: '1px solid #475569',
+              borderRadius: '2px',
+              padding: '0 2px',
+              fontSize: '10px',
+              textAlign: 'center',
+              outline: 'none',
+              fontFamily: 'monospace'
+            }
+          }),
+          React.createElement('span', null, 'lines')
+        )
       ),
       state.isTimeTraveling && React.createElement('span', {
         style: { background: '#f59e0b', color: '#000', padding: '1px 6px', borderRadius: '3px', fontSize: '10px', fontWeight: 'bold' }
@@ -1910,7 +2295,20 @@ export default function RctCodeViewPane(props = {}) {
       React.createElement('span', { style: { color: '#38bdf8', fontFamily: 'monospace' } }, `PC: 0x${currentPc}`)
     ),
 
-    React.createElement('div', { style: { ...S.content, background: '#0f131a', fontFamily: 'monospace', overflowX: 'auto', overflowY: 'auto' } },
+    React.createElement('style', null, `
+      .bp-gutter-cell:hover .bp-ghost {
+        opacity: 0.5 !important;
+        background-color: #e51400 !important;
+      }
+      .bp-gutter-cell {
+        position: relative;
+      }
+    `),
+
+    React.createElement('div', {
+      ref: tableContainerRef,
+      style: { ...S.content, background: '#0f131a', fontFamily: 'monospace', overflowX: 'auto', overflowY: 'auto' }
+    },
       React.createElement('table', { style: { width: '100%', minWidth: `${totalTableWidth}px`, borderCollapse: 'collapse', fontSize: '11px', tableLayout: 'fixed' } },
         React.createElement('thead', null,
           React.createElement('tr', { style: { color: '#64748b', borderBottom: '1px solid #1e293b', background: '#131822', position: 'sticky', top: 0, zIndex: 5 } },
@@ -1920,8 +2318,8 @@ export default function RctCodeViewPane(props = {}) {
                 width: `${colWidths[col.key]}px`,
                 minWidth: `${colWidths[col.key]}px`,
                 maxWidth: `${colWidths[col.key]}px`,
-                padding: '5px 6px',
-                textAlign: 'left',
+                padding: col.key === 'bp' ? '5px 0' : '5px 6px',
+                textAlign: col.key === 'bp' ? 'center' : 'left',
                 position: 'relative',
                 boxSizing: 'border-box',
                 userSelect: 'none',
@@ -1929,9 +2327,10 @@ export default function RctCodeViewPane(props = {}) {
               }
             },
               React.createElement('span', {
-                style: { display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }
-              }, col.label),
-              React.createElement('div', {
+                style: { display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: col.key === 'bp' ? '#475569' : '#64748b' },
+                title: col.key === 'bp' ? 'Breakpoints (Click in row to toggle)' : undefined
+              }, col.key === 'bp' ? '●' : col.label),
+              col.key !== 'bp' && React.createElement('div', {
                 title: 'Drag to adjust column width',
                 onMouseDown: (e) => startResize(col.key, e),
                 style: {
@@ -1964,19 +2363,59 @@ export default function RctCodeViewPane(props = {}) {
                 }
               },
                 React.createElement('td', { style: { padding: '2px 6px', color: '#475569' } }, ''),
-                React.createElement('td', { colSpan: 6, style: { padding: '2px 6px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, p.comment || '')
+                React.createElement('td', { colSpan: 7, style: { padding: '2px 6px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, p.comment || '')
               );
             }
             if (p.isLabel) {
+              const isBpSet = !!findPcBreakpoint(state.breakpoints, p.addr);
               return React.createElement('tr', {
                 key: idx,
                 style: { background: 'transparent', color: '#38bdf8', fontWeight: 'bold' }
               },
                 React.createElement('td', { style: { padding: '3px 6px', color: '#475569' } }, renderInteractiveCell(p.addr || '', 'addr', p, false)),
+                React.createElement('td', {
+                  className: 'bp-gutter-cell',
+                  style: {
+                    width: `${colWidths.bp || 22}px`,
+                    maxWidth: `${colWidths.bp || 22}px`,
+                    minWidth: `${colWidths.bp || 22}px`,
+                    padding: '3px 0',
+                    textAlign: 'center',
+                    verticalAlign: 'middle',
+                    cursor: p.addr ? 'pointer' : 'default',
+                    userSelect: 'none'
+                  },
+                  onClick: p.addr ? (e) => { e.stopPropagation(); togglePcBreakpoint(p.addr); } : undefined,
+                  title: p.addr ? (isBpSet ? `Breakpoint at 0x${p.addr} (Click to remove)` : `Click to set Breakpoint at 0x${p.addr}`) : undefined
+                },
+                  isBpSet ? React.createElement('div', {
+                    style: {
+                      width: '9px',
+                      height: '9px',
+                      borderRadius: '50%',
+                      backgroundColor: '#e51400',
+                      boxShadow: '0 0 6px #e51400',
+                      margin: '0 auto',
+                      transition: 'all 0.12s ease'
+                    }
+                  }) : (p.addr ? React.createElement('div', {
+                    className: 'bp-ghost',
+                    style: {
+                      width: '9px',
+                      height: '9px',
+                      borderRadius: '50%',
+                      border: '1px solid transparent',
+                      margin: '0 auto',
+                      opacity: 0,
+                      transition: 'opacity 0.15s ease'
+                    }
+                  }) : null)
+                ),
                 React.createElement('td', { colSpan: 6, style: { padding: '3px 6px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' } }, renderInteractiveCell(p.label || '', 'label', p, false))
               );
             }
             const isCur = p.addr && p.addr === currentPc;
+            const isBpSet = !!findPcBreakpoint(state.breakpoints, p.addr);
             return React.createElement('tr', {
               key: idx,
               ref: isCur ? activeRowRef : null,
@@ -1987,6 +2426,44 @@ export default function RctCodeViewPane(props = {}) {
               }
             },
               React.createElement('td', { style: { width: `${colWidths.addr}px`, maxWidth: `${colWidths.addr}px`, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', padding: '4px 6px', color: isCur ? '#fde047' : '#64748b' } }, renderInteractiveCell(p.addr, 'addr', p, isCur)),
+              React.createElement('td', {
+                className: 'bp-gutter-cell',
+                style: {
+                  width: `${colWidths.bp || 22}px`,
+                  maxWidth: `${colWidths.bp || 22}px`,
+                  minWidth: `${colWidths.bp || 22}px`,
+                  padding: '4px 0',
+                  textAlign: 'center',
+                  verticalAlign: 'middle',
+                  cursor: p.addr ? 'pointer' : 'default',
+                  userSelect: 'none'
+                },
+                onClick: p.addr ? (e) => { e.stopPropagation(); togglePcBreakpoint(p.addr); } : undefined,
+                title: p.addr ? (isBpSet ? `Breakpoint at 0x${p.addr} (Click to remove)` : `Click to set Breakpoint at 0x${p.addr}`) : undefined
+              },
+                isBpSet ? React.createElement('div', {
+                  style: {
+                    width: '9px',
+                    height: '9px',
+                    borderRadius: '50%',
+                    backgroundColor: '#e51400',
+                    boxShadow: '0 0 6px #e51400',
+                    margin: '0 auto',
+                    transition: 'all 0.12s ease'
+                  }
+                }) : (p.addr ? React.createElement('div', {
+                  className: 'bp-ghost',
+                  style: {
+                    width: '9px',
+                    height: '9px',
+                    borderRadius: '50%',
+                    border: '1px solid transparent',
+                    margin: '0 auto',
+                    opacity: 0,
+                    transition: 'opacity 0.15s ease'
+                  }
+                }) : null)
+              ),
               React.createElement('td', { style: { width: `${colWidths.bytes}px`, maxWidth: `${colWidths.bytes}px`, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', padding: '4px 6px', color: '#94a3b8' } }, p.bytes),
               React.createElement('td', { style: { width: `${colWidths.label}px`, maxWidth: `${colWidths.label}px`, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', padding: '4px 6px', color: '#38bdf8', fontWeight: 'bold' } }, renderInteractiveCell(p.label || '', 'label', p, isCur)),
               React.createElement('td', { style: { width: `${colWidths.mnem}px`, maxWidth: `${colWidths.mnem}px`, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', padding: '4px 6px', color: isCur ? '#fde047' : '#4ade80', fontWeight: 'bold' } }, p.mnem),

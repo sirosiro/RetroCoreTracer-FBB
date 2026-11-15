@@ -3,7 +3,7 @@ export const minApiVersion = 1;
 
 function getRctStore() {
   if (typeof window === 'undefined') return null;
-  if (!window.__RCT_STORE__ || (window.__RCT_STORE__.version || 0) < 8) {
+  if (!window.__RCT_STORE__ || (window.__RCT_STORE__.version || 0) < 11) {
     if (typeof window !== 'undefined' && window.__RCT_STORE__ && window.__RCT_STORE__._channel) {
       try { window.__RCT_STORE__._channel.close(); } catch (e) {}
     }
@@ -63,9 +63,7 @@ function getRctStore() {
         mreq: false, iorq: false, rd: false, wr: false, m1: false,
         active: false
       },
-      breakpoints: [
-        { id: 1, type: 'PC_MATCH', condition: '== 0x0003 (EX_TEST)', status: 'Active' }
-      ],
+      breakpoints: [],
       bpType: 'PC_MATCH',
       bpValue: '',
       program: initialProgram,
@@ -107,6 +105,27 @@ function getRctStore() {
     }
 
     let runTimer = null;
+    let turboRaf = null;
+    let lastTurboUiTime = 0;
+    let lastTurboFlushTime = 0;
+    let turboStartHistoryLen = 0;
+    let skipNextSingleSync = false;
+
+    function stopRunning() {
+      state.isRunning = false;
+      if (runTimer) {
+        clearInterval(runTimer);
+        runTimer = null;
+      }
+      if (turboRaf) {
+        if (typeof cancelAnimationFrame !== 'undefined') {
+          cancelAnimationFrame(turboRaf);
+        } else {
+          clearTimeout(turboRaf);
+        }
+        turboRaf = null;
+      }
+    }
 
     // F-BB Core Dashboard Time-Travel Sync Channel
     const fbbSyncChannel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('fbb_dashboard_sync') : null;
@@ -182,12 +201,53 @@ function getRctStore() {
       });
     }
 
+    function syncMmioBatchToFbb(steps) {
+      if (state.isTimeTraveling) return;
+      if (typeof window === 'undefined' || !window.FBB || !window.FBB.socket) return;
+      if (!Array.isArray(steps) || steps.length === 0) return;
+
+      const parse16 = (v) => parseInt((v || '0').replace('0x', ''), 16) || 0;
+      const parseSp = (v) => parseInt((v || '0').replace('0x', ''), 16) || 0;
+
+      const batch = steps.map((h, idx) => {
+        const flagsVal = (h.flags.s << 7) | (h.flags.z << 6) | (h.flags.h << 4) | (h.flags.pv << 2) | (h.flags.n << 1) | h.flags.c;
+        const isLast = (idx === steps.length - 1);
+        return {
+          CTRL: 1,
+          STATUS: isLast ? (state.isRunning ? 1 : 0) : 1,
+          CMD: 0,
+          CYCLES: h.cycleCount,
+          PC: parseInt(h.currentPc, 16) || 0,
+          SP: parseSp(h.regs.sp),
+          AF: parse16(h.regs.af),
+          BC: parse16(h.regs.bc),
+          DE: parse16(h.regs.de),
+          HL: parse16(h.regs.hl),
+          IX: parse16(h.regs.ix),
+          IY: parse16(h.regs.iy),
+          FLAGS: flagsVal,
+          AF_ALT: parse16(h.regs.af_alt),
+          BC_ALT: parse16(h.regs.bc_alt),
+          DE_ALT: parse16(h.regs.de_alt),
+          HL_ALT: parse16(h.regs.hl_alt)
+        };
+      });
+
+      window.FBB.socket.emit('mmio:write_batch', {
+        deviceName: 'vfpga_z80',
+        batch
+      });
+    }
+
     function notify(origin) {
       listeners.forEach(l => {
-        try { l(state); } catch (e) { console.error(e); }
+        try { l(state, origin); } catch (e) { console.error(e); }
       });
       if (origin === 'local' && !state.isTimeTraveling) {
-        syncMmioToFbb();
+        if (!skipNextSingleSync) {
+          syncMmioToFbb();
+        }
+        skipNextSingleSync = false;
         if (channel) {
           const lastHist = state.history[state.history.length - 1];
           channel.postMessage({
@@ -198,6 +258,18 @@ function getRctStore() {
             }
           });
         }
+      } else if (origin === 'turbo_tick' && channel) {
+        channel.postMessage({
+          type: 'TURBO_TICK',
+          payload: {
+            regs: state.regs,
+            flags: state.flags,
+            currentPc: state.currentPc,
+            stepCount: state.stepCount,
+            cycleCount: state.cycleCount,
+            isRunning: state.isRunning
+          }
+        });
       }
     }
 
@@ -207,8 +279,14 @@ function getRctStore() {
     }
 
     // Accurate Z80 Instruction Stepping Engine
-    function step() {
-      if (state.isTimeTraveling) return;
+    function step(silent = false) {
+      const isSilent = typeof silent === 'boolean' ? silent : false;
+      if (state.isTimeTraveling) return false;
+
+      // History cap to prevent OOM in long runs (keeps last 50,000 steps)
+      if (state.history.length >= 50000) {
+        state.history.shift();
+      }
 
       const memChanges = [];
       state.history.push({
@@ -296,25 +374,48 @@ const resolveIndexedAddr = (str, item) => {
       const resolveJumpTarget = (item, candidate) => {
         const candidates = [candidate, item && item.dest, item && item.src].filter(Boolean);
         for (let cand of candidates) {
-          const cleaned = cand.replace('$', '').replace('(', '').replace(')', '').replace(',', '').trim();
+          const rawTrimmed = cand.replace(/[(),]/g, '').trim();
+
           // 1. Try finding by label in program
           const match = state.program.find(p => {
             if (!p.label || !p.addr) return false;
             const l = p.label.replace(':', '').trim();
-            return l.toLowerCase() === cleaned.toLowerCase();
+            return l.toLowerCase() === rawTrimmed.toLowerCase();
           });
           if (match) {
             const a = parseInt(match.addr, 16);
             if (!isNaN(a)) return a;
           }
-          // 2. Try hex address (e.g. 0005, 0x0005, $0005)
-          const immA = parseVal(cleaned);
-          if (!isNaN(immA)) return immA;
-          if (/^(0x)?[0-9a-fA-F]{1,4}$/i.test(cleaned)) {
-            const a = parseInt(cleaned.replace(/^0x/i, ''), 16);
+
+          // 2. Explicit hex formats (bash055, 0x0055, 0055h)
+          if (rawTrimmed.startsWith('$')) {
+            const a = parseInt(rawTrimmed.slice(1), 16);
             if (!isNaN(a)) return a;
           }
-          // 3. Try relative offset e.g. (-5), +5, -5
+          if (/^0x[0-9a-fA-F]+$/i.test(rawTrimmed)) {
+            const a = parseInt(rawTrimmed, 16);
+            if (!isNaN(a)) return a;
+          }
+          if (/^[0-9a-fA-F]+[hH]$/i.test(rawTrimmed)) {
+            const a = parseInt(rawTrimmed.slice(0, -1), 16);
+            if (!isNaN(a)) return a;
+          }
+
+          // 3. Try instruction opcode bytes if available (CALL nn / JP nn has 3 bytes: OP, lo, hi)
+          if (item && item.bytes && (item.mnem === 'CALL' || item.mnem === 'JP')) {
+            const b = item.bytes.trim().split(/\s+/).map(x => parseInt(x, 16)).filter(x => !isNaN(x));
+            if (b.length >= 3) {
+              return (b[2] << 8) | b[1];
+            }
+          }
+
+          // 4. Try 3 or 4-digit hex address (e.g. 0055, 0100)
+          if (/^[0-9a-fA-F]{3,4}$/i.test(rawTrimmed)) {
+            const a = parseInt(rawTrimmed, 16);
+            if (!isNaN(a)) return a;
+          }
+
+          // 5. Try relative offset e.g. (-5), +5, -5 (for JR and DJNZ)
           const offMatch = cand.match(/^[\(\[]?\s*([+-]?\d+)\s*[\)\]]?$/);
           if (offMatch) {
             const offset = parseInt(offMatch[1], 10);
@@ -322,6 +423,10 @@ const resolveIndexedAddr = (str, item) => {
             const basePc = item && item.addr ? parseInt(item.addr, 16) : pcNum;
             return (basePc + instrLen + offset) & 0xFFFF;
           }
+
+          // 6. Generic parseVal fallback
+          const immA = parseVal(rawTrimmed);
+          if (!isNaN(immA)) return immA;
         }
         return NaN;
       };
@@ -1186,13 +1291,11 @@ const resolveIndexedAddr = (str, item) => {
 
       // Check if breakpoint hit at new PC
       const hitBp = checkBreakpoints(nextPcHex);
+      const isHalted = (curItem && curItem.mnem === 'HALT');
+
       if (hitBp) {
         if (state.isRunning) {
-          if (runTimer) {
-            clearInterval(runTimer);
-            runTimer = null;
-          }
-          state.isRunning = false;
+          stopRunning();
         }
         state.hitBpId = hitBp.id;
         state.statusMsg = `BP HIT: 0x${nextPcHex}`;
@@ -1201,12 +1304,82 @@ const resolveIndexedAddr = (str, item) => {
         state.statusMsg = null;
       }
 
-      notify('local');
+      if (isHalted && state.isRunning) {
+        stopRunning();
+      }
 
-      setTimeout(() => {
-        state.bus = { ...state.bus, active: false };
+      if (!isSilent) {
         notify('local');
-      }, 200);
+        setTimeout(() => {
+          state.bus = { ...state.bus, active: false };
+          notify('local');
+        }, 200);
+      }
+
+      return isHalted || !!hitBp;
+    }
+
+    function runTurboChunk() {
+      if (!state.isRunning) return;
+
+      const BATCH_SIZE = 1000;
+      const TIME_SLICE_MS = 20; // 20ms execution budget per slice (~50 FPS)
+      const startT = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+
+      let count = 0;
+      let shouldStop = false;
+
+      while (count < BATCH_SIZE && !shouldStop && state.isRunning) {
+        const hit = step(true); // silent = true: zero DOM/cloning overhead
+        count++;
+        if (hit) {
+          shouldStop = true;
+          break;
+        }
+        if (count % 100 === 0) {
+          const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+          if (now - startT >= TIME_SLICE_MS) {
+            break;
+          }
+        }
+      }
+
+      if (shouldStop || !state.isRunning) {
+        stopRunning();
+        const newSteps = state.history.slice(turboStartHistoryLen);
+        if (newSteps.length > 0) {
+          syncMmioBatchToFbb(newSteps.slice(-500));
+          turboStartHistoryLen = state.history.length;
+          skipNextSingleSync = true;
+        }
+        notify('local'); // Full synchronization to all panes upon stop/breakpoint/HALT
+        return;
+      }
+
+      // Throttled UI update (~30ms) for Registers & Controller
+      const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+      if (now - lastTurboUiTime >= 30) {
+        lastTurboUiTime = now;
+        notify('turbo_tick');
+      }
+
+      // Periodic stream to F-BB Tracer every 300ms during long Turbo runs
+      if (now - lastTurboFlushTime >= 300) {
+        lastTurboFlushTime = now;
+        const newSteps = state.history.slice(turboStartHistoryLen);
+        if (newSteps.length > 0) {
+          syncMmioBatchToFbb(newSteps.slice(-500));
+          turboStartHistoryLen = state.history.length;
+        }
+      }
+
+      if (state.isRunning) {
+        if (typeof requestAnimationFrame !== 'undefined') {
+          turboRaf = requestAnimationFrame(runTurboChunk);
+        } else {
+          turboRaf = setTimeout(runTurboChunk, 0);
+        }
+      }
     }
 
     function backstep() {
@@ -1229,10 +1402,7 @@ const resolveIndexedAddr = (str, item) => {
     }
 
     function reset() {
-      if (runTimer) {
-        clearInterval(runTimer);
-        runTimer = null;
-      }
+      stopRunning();
       state.isRunning = false;
       state.stepCount = 0;
       state.cycleCount = 0;
@@ -1265,33 +1435,54 @@ const resolveIndexedAddr = (str, item) => {
         }
       }
       state.history = [];
+      turboStartHistoryLen = 0;
+      if (typeof window !== 'undefined' && window.FBB && window.FBB.socket) {
+        window.FBB.socket.emit('trace-history-clear');
+      }
       notify('local');
     }
 
     function setRunning(running) {
       if (state.isTimeTraveling && running) return;
+      stopRunning();
       state.isRunning = running;
-      if (runTimer) {
-        clearInterval(runTimer);
-        runTimer = null;
-      }
+
       if (running) {
-        runTimer = setInterval(() => {
-          step();
-        }, state.clockSpeed);
+        turboStartHistoryLen = state.history.length;
+        lastTurboFlushTime = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+        if (state.clockSpeed === 0) {
+          lastTurboUiTime = lastTurboFlushTime;
+          notify('local'); // Update button to 'Stop' immediately
+          if (typeof requestAnimationFrame !== 'undefined') {
+            turboRaf = requestAnimationFrame(runTurboChunk);
+          } else {
+            turboRaf = setTimeout(runTurboChunk, 0);
+          }
+        } else {
+          runTimer = setInterval(() => {
+            step(false);
+          }, state.clockSpeed);
+          notify('local');
+        }
+      } else {
+        const newSteps = state.history.slice(turboStartHistoryLen);
+        if (newSteps.length > 0) {
+          syncMmioBatchToFbb(newSteps.slice(-500));
+          turboStartHistoryLen = state.history.length;
+          skipNextSingleSync = true;
+        }
+        notify('local');
       }
-      notify('local');
     }
 
     function setClockSpeed(speed) {
       state.clockSpeed = speed;
       if (state.isRunning) {
-        if (runTimer) clearInterval(runTimer);
-        runTimer = setInterval(() => {
-          step();
-        }, speed);
+        setRunning(false);
+        setRunning(true);
+      } else {
+        notify('local');
       }
-      notify('local');
     }
 
     function setZoom(z) {
@@ -1360,12 +1551,21 @@ const resolveIndexedAddr = (str, item) => {
             }
           }
           notify('remote');
+        } else if (e.data && e.data.type === 'TURBO_TICK') {
+          const { regs, flags, currentPc, stepCount, cycleCount, isRunning } = e.data.payload;
+          state.regs = regs;
+          state.flags = flags;
+          state.currentPc = currentPc;
+          state.stepCount = stepCount;
+          state.cycleCount = cycleCount;
+          state.isRunning = isRunning;
+          notify('turbo_tick');
         }
       };
     }
 
     window.__RCT_STORE__ = {
-      version: 8,
+      version: 11,
       _channel: channel,
       _listeners: listeners,
       getState: () => state,
@@ -1374,9 +1574,9 @@ const resolveIndexedAddr = (str, item) => {
         return () => listeners.delete(fn);
       },
       actions: {
-        step,
-        backstep,
-        reset,
+        step: () => step(false),
+        backstep: () => backstep(),
+        reset: () => reset(),
         setRunning,
         setClockSpeed,
         setZoom,
@@ -1399,7 +1599,7 @@ function useRctStore() {
 
   useEffect(() => {
     if (!store) return;
-    return store.subscribe(newState => setState({ ...newState }));
+    return store.subscribe((newState, origin) => { setState({ ...newState }); });
   }, [store]);
 
   return [state, store ? store.actions : {}];
