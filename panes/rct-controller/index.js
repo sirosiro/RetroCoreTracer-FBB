@@ -3,7 +3,7 @@ export const minApiVersion = 1;
 
 function getRctStore() {
   if (typeof window === 'undefined') return null;
-  if (!window.__RCT_STORE__ || (window.__RCT_STORE__.version || 0) < 11) {
+  if (!window.__RCT_STORE__ || (window.__RCT_STORE__.version || 0) < 12) {
     if (typeof window !== 'undefined' && window.__RCT_STORE__ && window.__RCT_STORE__._channel) {
       try { window.__RCT_STORE__._channel.close(); } catch (e) {}
     }
@@ -61,8 +61,14 @@ function getRctStore() {
       bus: {
         addr: '0x0000', data_in: '0x00', data_out: '0x00',
         mreq: false, iorq: false, rd: false, wr: false, m1: false,
+        cs_rom: false, cs_ram: false, unmapped: false,
         active: false
       },
+      memoryRegions: [
+        { name: 'rom0', type: 'rom', base_addr: 0x0000, size: 0x4000, label: 'ROM (0000-3FFF)', readOnly: true },
+        { name: 'ram0', type: 'ram', base_addr: 0x8000, size: 0x8000, label: 'RAM (8000-FFFF)', readOnly: false }
+      ],
+      busViolation: null,
       breakpoints: [],
       bpType: 'PC_MATCH',
       bpValue: '',
@@ -103,6 +109,41 @@ function getRctStore() {
         })
         .catch(() => { });
     }
+
+    // Automatically fetch board manifest to dynamically configure ROM/RAM regions from Devicetree (SSOT)
+    if (typeof fetch !== 'undefined') {
+      fetch('/api/manifest')
+        .then(res => res.ok ? res.json() : null)
+        .then(manifest => {
+          if (manifest && Array.isArray(manifest.devices)) {
+            const regions = [];
+            for (const d of manifest.devices) {
+              const isRom = d.type === 'rom' || (d.extra && (d.extra['read-only'] === true || d.extra['read-only'] === 'true'));
+              const isRam = d.type === 'ram' || (d.extra && (d.extra.device_type === 'memory' || (d.extra.compatible && d.extra.compatible.includes('ram'))));
+              if (isRom || isRam) {
+                const base = typeof d.base_addr === 'number' ? d.base_addr : parseInt(d.base_addr || '0', 0);
+                const sz = typeof d.size === 'number' ? d.size : parseInt(d.size || '0', 0);
+                const lbl = d.path || (d.extra && d.extra.label) || (isRom ? `ROM (${base.toString(16).toUpperCase()}-${(base + sz - 1).toString(16).toUpperCase()})` : `RAM (${base.toString(16).toUpperCase()}-${(base + sz - 1).toString(16).toUpperCase()})`);
+                regions.push({
+                  name: d.name,
+                  type: isRom ? 'rom' : 'ram',
+                  base_addr: base,
+                  size: sz,
+                  label: lbl,
+                  readOnly: isRom
+                });
+              }
+            }
+            if (regions.length > 0) {
+              regions.sort((a, b) => a.base_addr - b.base_addr);
+              state.memoryRegions = regions;
+              notify('local');
+            }
+          }
+        })
+        .catch(() => {});
+    }
+
 
     let runTimer = null;
     let turboRaf = null;
@@ -279,6 +320,70 @@ function getRctStore() {
     }
 
     // Accurate Z80 Instruction Stepping Engine
+
+    function decodeAddress(addr) {
+      const a = addr & 0xFFFF;
+      const regions = state.memoryRegions || [
+        { name: 'rom0', type: 'rom', base_addr: 0x0000, size: 0x4000, label: 'ROM (0000-3FFF)', readOnly: true },
+        { name: 'ram0', type: 'ram', base_addr: 0x8000, size: 0x8000, label: 'RAM (8000-FFFF)', readOnly: false }
+      ];
+      for (const r of regions) {
+        if (a >= r.base_addr && a < (r.base_addr + r.size)) {
+          return {
+            region: r,
+            cs_rom: !!r.readOnly,
+            cs_ram: !r.readOnly,
+            unmapped: false
+          };
+        }
+      }
+      return { region: null, cs_rom: false, cs_ram: false, unmapped: true };
+    }
+
+    function writeMem(addr, val, memChanges) {
+      const a = addr & 0xFFFF;
+      const v = val & 0xFF;
+      const decoded = decodeAddress(a);
+      if (decoded.unmapped) {
+        state.busViolation = {
+          type: 'UNMAPPED_WRITE',
+          addr: '0x' + a.toString(16).padStart(4, '0').toUpperCase(),
+          val: '0x' + v.toString(16).padStart(2, '0').toUpperCase(),
+          msg: `Write to unmapped address 0x${a.toString(16).padStart(4, '0').toUpperCase()} blocked!`
+        };
+        return false;
+      }
+      if (decoded.region && decoded.region.readOnly) {
+        state.busViolation = {
+          type: 'ROM_WRITE',
+          addr: '0x' + a.toString(16).padStart(4, '0').toUpperCase(),
+          val: '0x' + v.toString(16).padStart(2, '0').toUpperCase(),
+          msg: `Write to read-only ${decoded.region.label || 'ROM'} at 0x${a.toString(16).padStart(4, '0').toUpperCase()} blocked!`
+        };
+        return false; // Hardware write protection: drop write
+      }
+      if (memChanges) {
+        memChanges.push({ addr: a, oldVal: state.memory[a] || 0, newVal: v });
+      }
+      state.memory[a] = v;
+      return true;
+    }
+
+    function readMem(addr) {
+      const a = addr & 0xFFFF;
+      const decoded = decodeAddress(a);
+      if (decoded.unmapped) {
+        state.busViolation = {
+          type: 'UNMAPPED_READ',
+          addr: '0x' + a.toString(16).padStart(4, '0').toUpperCase(),
+          val: '0xFF',
+          msg: `Read from unmapped address 0x${a.toString(16).padStart(4, '0').toUpperCase()}`
+        };
+        return 0xFF;
+      }
+      return state.memory[a] || 0;
+    }
+
     function step(silent = false) {
       const isSilent = typeof silent === 'boolean' ? silent : false;
       if (state.isTimeTraveling) return false;
@@ -295,6 +400,7 @@ function getRctStore() {
         regs: { ...state.regs },
         flags: { ...state.flags },
         bus: { ...state.bus },
+        busViolation: state.busViolation,
         currentPc: state.currentPc,
         lastExecuted: state.lastExecuted,
         memChanges
@@ -316,7 +422,10 @@ function getRctStore() {
       let tCycles = 4;
       let busAddr = '0x' + state.currentPc;
       let busData = curItem ? curItem.bytes.split(' ')[0] : '00';
+      let busIsWrite = false;
+      let busIsFetch = true;
 
+      state.busViolation = null;
       state.lastUpdatedReg = null;
       state.lastOpType = curItem ? curItem.mnem : 'NOP';
       state.lastOpDesc = null;
@@ -442,17 +551,42 @@ const resolveIndexedAddr = (str, item) => {
           const destIdxAddr = resolveIndexedAddr(dest, curItem);
 
           if (srcIdxAddr !== null) {
-            srcVal = state.memory[srcIdxAddr] || 0;
+            srcVal = readMem(srcIdxAddr);
+            busAddr = '0x' + srcIdxAddr.toString(16).padStart(4, '0').toUpperCase();
+            busData = (srcVal & 0xFF).toString(16).padStart(2, '0').toUpperCase();
+            busIsWrite = false; busIsFetch = false;
             tCycles = 19;
           } else if (src === '(HL)') {
-            srcVal = state.memory[(rH << 8) | rL] || 0;
+            const a = (rH << 8) | rL;
+            srcVal = readMem(a);
+            busAddr = '0x' + a.toString(16).padStart(4, '0').toUpperCase();
+            busData = (srcVal & 0xFF).toString(16).padStart(2, '0').toUpperCase();
+            busIsWrite = false; busIsFetch = false;
             tCycles = 7;
           } else if (src === '(DE)') {
-            srcVal = state.memory[(rD << 8) | rE] || 0;
+            const a = (rD << 8) | rE;
+            srcVal = readMem(a);
+            busAddr = '0x' + a.toString(16).padStart(4, '0').toUpperCase();
+            busData = (srcVal & 0xFF).toString(16).padStart(2, '0').toUpperCase();
+            busIsWrite = false; busIsFetch = false;
             tCycles = 7;
           } else if (src === '(BC)') {
-            srcVal = state.memory[(rB << 8) | rC] || 0;
+            const a = (rB << 8) | rC;
+            srcVal = readMem(a);
+            busAddr = '0x' + a.toString(16).padStart(4, '0').toUpperCase();
+            busData = (srcVal & 0xFF).toString(16).padStart(2, '0').toUpperCase();
+            busIsWrite = false; busIsFetch = false;
             tCycles = 7;
+          } else if (src.startsWith('(') && src.endsWith(')')) {
+            const cleanSrc = src.slice(1, -1).trim();
+            const addrVal = parseVal(cleanSrc);
+            if (!isNaN(addrVal)) {
+              srcVal = readMem(addrVal);
+              busAddr = '0x' + addrVal.toString(16).padStart(4, '0').toUpperCase();
+              busData = (srcVal & 0xFF).toString(16).padStart(2, '0').toUpperCase();
+              busIsWrite = false; busIsFetch = false;
+              tCycles = 13;
+            }
           } else if (src === 'A') srcVal = rA;
           else if (src === 'B') srcVal = rB;
           else if (src === 'C') srcVal = rC;
@@ -479,24 +613,42 @@ const resolveIndexedAddr = (str, item) => {
           }
 
           if (destIdxAddr !== null) {
-            memChanges.push({ addr: destIdxAddr, oldVal: state.memory[destIdxAddr] || 0, newVal: srcVal & 0xFF });
-            state.memory[destIdxAddr] = srcVal & 0xFF;
+            busAddr = '0x' + destIdxAddr.toString(16).padStart(4, '0').toUpperCase();
+            busData = (srcVal & 0xFF).toString(16).padStart(2, '0').toUpperCase();
+            busIsWrite = true; busIsFetch = false;
+            writeMem(destIdxAddr, srcVal, memChanges);
             tCycles = 19;
           } else if (dest === '(HL)') {
             const a = (rH << 8) | rL;
-            memChanges.push({ addr: a, oldVal: state.memory[a] || 0, newVal: srcVal & 0xFF });
-            state.memory[a] = srcVal & 0xFF;
+            busAddr = '0x' + a.toString(16).padStart(4, '0').toUpperCase();
+            busData = (srcVal & 0xFF).toString(16).padStart(2, '0').toUpperCase();
+            busIsWrite = true; busIsFetch = false;
+            writeMem(a, srcVal, memChanges);
             tCycles = 7;
           } else if (dest === '(DE)') {
             const a = (rD << 8) | rE;
-            memChanges.push({ addr: a, oldVal: state.memory[a] || 0, newVal: srcVal & 0xFF });
-            state.memory[a] = srcVal & 0xFF;
+            busAddr = '0x' + a.toString(16).padStart(4, '0').toUpperCase();
+            busData = (srcVal & 0xFF).toString(16).padStart(2, '0').toUpperCase();
+            busIsWrite = true; busIsFetch = false;
+            writeMem(a, srcVal, memChanges);
             tCycles = 7;
           } else if (dest === '(BC)') {
             const a = (rB << 8) | rC;
-            memChanges.push({ addr: a, oldVal: state.memory[a] || 0, newVal: srcVal & 0xFF });
-            state.memory[a] = srcVal & 0xFF;
+            busAddr = '0x' + a.toString(16).padStart(4, '0').toUpperCase();
+            busData = (srcVal & 0xFF).toString(16).padStart(2, '0').toUpperCase();
+            busIsWrite = true; busIsFetch = false;
+            writeMem(a, srcVal, memChanges);
             tCycles = 7;
+          } else if (dest.startsWith('(') && dest.endsWith(')')) {
+            const cleanDest = dest.slice(1, -1).trim();
+            const addrVal = parseVal(cleanDest);
+            if (!isNaN(addrVal)) {
+              busAddr = '0x' + addrVal.toString(16).padStart(4, '0').toUpperCase();
+              busData = (srcVal & 0xFF).toString(16).padStart(2, '0').toUpperCase();
+              busIsWrite = true; busIsFetch = false;
+              writeMem(addrVal, srcVal, memChanges);
+              tCycles = 13;
+            }
           } else if (dest === 'A') rA = srcVal & 0xFF;
           else if (dest === 'B') rB = srcVal & 0xFF;
           else if (dest === 'C') rC = srcVal & 0xFF;
@@ -1040,9 +1192,12 @@ const resolveIndexedAddr = (str, item) => {
           else if (dest === 'IY') { let iy = (parseInt(state.regs.iy.replace('0x', ''), 16) + 1) & 0xFFFF; state.regs.iy = '0x' + iy.toString(16).padStart(4, '0').toUpperCase(); tCycles = 10; }
           else if (dest === '(HL)') {
             const a = (rH << 8) | rL;
-            const newVal = ((state.memory[a] || 0) + 1) & 0xFF;
-            memChanges.push({ addr: a, oldVal: state.memory[a] || 0, newVal });
-            state.memory[a] = newVal;
+            const oldVal = readMem(a);
+            const newVal = (oldVal + 1) & 0xFF;
+            busAddr = '0x' + a.toString(16).padStart(4, '0').toUpperCase();
+            busData = newVal.toString(16).padStart(2, '0').toUpperCase();
+            busIsWrite = true; busIsFetch = false;
+            writeMem(a, newVal, memChanges);
             tCycles = 11;
           } else if (dest === 'IXH') {
             let ix = parseInt(state.regs.ix.replace('0x', ''), 16) || 0;
@@ -1085,9 +1240,12 @@ const resolveIndexedAddr = (str, item) => {
           else if (dest === 'IY') { let iy = (parseInt(state.regs.iy.replace('0x', ''), 16) - 1) & 0xFFFF; state.regs.iy = '0x' + iy.toString(16).padStart(4, '0').toUpperCase(); tCycles = 10; }
           else if (dest === '(HL)') {
             const a = (rH << 8) | rL;
-            const newVal = ((state.memory[a] || 0) - 1) & 0xFF;
-            memChanges.push({ addr: a, oldVal: state.memory[a] || 0, newVal });
-            state.memory[a] = newVal;
+            const oldVal = readMem(a);
+            const newVal = (oldVal - 1) & 0xFF;
+            busAddr = '0x' + a.toString(16).padStart(4, '0').toUpperCase();
+            busData = newVal.toString(16).padStart(2, '0').toUpperCase();
+            busIsWrite = true; busIsFetch = false;
+            writeMem(a, newVal, memChanges);
             tCycles = 11;
           } else if (dest === 'IXH') {
             let ix = parseInt(state.regs.ix.replace('0x', ''), 16) || 0;
@@ -1138,10 +1296,9 @@ const resolveIndexedAddr = (str, item) => {
           const lo = val16 & 0xFF;
           const addrHi = (spNum - 1) & 0xFFFF;
           const addrLo = (spNum - 2) & 0xFFFF;
-          memChanges.push({ addr: addrHi, oldVal: state.memory[addrHi] || 0, newVal: hi });
-          memChanges.push({ addr: addrLo, oldVal: state.memory[addrLo] || 0, newVal: lo });
-          state.memory[addrHi] = hi;
-          state.memory[addrLo] = lo;
+          busIsWrite = true; busIsFetch = false;
+          writeMem(addrHi, hi, memChanges);
+          writeMem(addrLo, lo, memChanges);
           spNum = addrLo;
           state.regs.sp = '0x' + spNum.toString(16).padStart(4, '0').toUpperCase();
           busAddr = '0x' + spNum.toString(16).padStart(4, '0').toUpperCase();
@@ -1150,8 +1307,9 @@ const resolveIndexedAddr = (str, item) => {
           tCycles = 10;
           const dest = curItem.dest.replace(',', '').trim();
           let spNum = getSp();
-          const lo = state.memory[spNum] || 0;
-          const hi = state.memory[(spNum + 1) & 0xFFFF] || 0;
+          const lo = readMem(spNum);
+          const hi = readMem((spNum + 1) & 0xFFFF);
+          busIsWrite = false; busIsFetch = false;
           spNum = (spNum + 2) & 0xFFFF;
           state.regs.sp = '0x' + spNum.toString(16).padStart(4, '0').toUpperCase();
 
@@ -1220,12 +1378,13 @@ const resolveIndexedAddr = (str, item) => {
             const lo = retAddr & 0xFF;
             const addrHi = (spNum - 1) & 0xFFFF;
             const addrLo = (spNum - 2) & 0xFFFF;
-            memChanges.push({ addr: addrHi, oldVal: state.memory[addrHi] || 0, newVal: hi });
-            memChanges.push({ addr: addrLo, oldVal: state.memory[addrLo] || 0, newVal: lo });
-            state.memory[addrHi] = hi;
-            state.memory[addrLo] = lo;
+            busIsWrite = true; busIsFetch = false;
+            writeMem(addrHi, hi, memChanges);
+            writeMem(addrLo, lo, memChanges);
             spNum = addrLo;
             state.regs.sp = '0x' + spNum.toString(16).padStart(4, '0').toUpperCase();
+            busAddr = '0x' + spNum.toString(16).padStart(4, '0').toUpperCase();
+            busData = lo.toString(16).padStart(2, '0').toUpperCase();
 
             const targetNum = resolveJumpTarget(curItem, targetCandidate);
             if (!isNaN(targetNum)) nextPcNum = targetNum;
@@ -1243,11 +1402,14 @@ const resolveIndexedAddr = (str, item) => {
           if (shouldRet) {
             tCycles = 10;
             let spNum = getSp();
-            const lo = state.memory[spNum] || 0;
-            const hi = state.memory[(spNum + 1) & 0xFFFF] || 0;
+            const lo = readMem(spNum);
+            const hi = readMem((spNum + 1) & 0xFFFF);
             spNum = (spNum + 2) & 0xFFFF;
             state.regs.sp = '0x' + spNum.toString(16).padStart(4, '0').toUpperCase();
             nextPcNum = (hi << 8) | lo;
+            busAddr = '0x' + ((spNum - 2) & 0xFFFF).toString(16).padStart(4, '0').toUpperCase();
+            busData = lo.toString(16).padStart(2, '0').toUpperCase();
+            busIsWrite = false; busIsFetch = false;
           } else {
             tCycles = 5;
           }
@@ -1281,11 +1443,28 @@ const resolveIndexedAddr = (str, item) => {
         pc: '0x' + nextPcHex
       };
 
+      const busAddrNum = parseInt(busAddr.replace('0x', ''), 16) || 0;
+      const decoded = decodeAddress(busAddrNum);
+      if (decoded.unmapped && !state.busViolation) {
+        state.busViolation = {
+          type: busIsWrite ? 'UNMAPPED_WRITE' : 'UNMAPPED_READ',
+          addr: busAddr,
+          val: busData,
+          msg: `${busIsWrite ? 'Write to' : 'Read from'} unmapped address ${busAddr} blocked!`
+        };
+      }
       state.bus = {
         addr: busAddr,
-        data_in: busData,
-        data_out: '00',
-        mreq: true, iorq: false, rd: true, wr: false, m1: true,
+        data_in: busIsWrite ? '00' : busData,
+        data_out: busIsWrite ? busData : '00',
+        mreq: true,
+        iorq: false,
+        rd: !busIsWrite,
+        wr: !!busIsWrite,
+        m1: busIsFetch,
+        cs_rom: decoded.cs_rom,
+        cs_ram: decoded.cs_ram,
+        unmapped: decoded.unmapped,
         active: true
       };
 
@@ -1396,6 +1575,7 @@ const resolveIndexedAddr = (str, item) => {
       state.regs = prev.regs;
       state.flags = prev.flags;
       state.bus = prev.bus;
+      state.busViolation = prev.busViolation || null;
       state.currentPc = prev.currentPc;
       state.lastExecuted = prev.lastExecuted;
       notify('local');
@@ -1415,9 +1595,11 @@ const resolveIndexedAddr = (str, item) => {
         i: '0x00', r: '0x00', im: 0
       };
       state.flags = { s: 0, z: 0, h: 0, pv: 0, n: 0, c: 0 };
+      state.busViolation = null;
       state.bus = {
-        addr: '0x0000', data_in: '0x00', data_out: '0x00',
+        addr: '0x' + state.currentPc, data_in: '0x00', data_out: '0x00',
         mreq: false, iorq: false, rd: false, wr: false, m1: false,
+        cs_rom: false, cs_ram: false, unmapped: false,
         active: false
       };
       // Reset stack memory area
@@ -1565,7 +1747,7 @@ const resolveIndexedAddr = (str, item) => {
     }
 
     window.__RCT_STORE__ = {
-      version: 11,
+      version: 12,
       _channel: channel,
       _listeners: listeners,
       getState: () => state,

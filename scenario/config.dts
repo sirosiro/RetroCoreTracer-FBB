@@ -25,4 +25,19 @@
         reg = <0x42000000 0x1000>;
         label = "/dev/uio0";
     };
+
+    /* Z80 Memory Map Definition (Single Source of Truth) */
+    rom0: memory@0 {
+        compatible = "rom";
+        reg = <0x0000 0x4000>;
+        label = "ROM (0000-3FFF)";
+        read-only;
+    };
+
+    ram0: memory@8000 {
+        device_type = "memory";
+        compatible = "ram";
+        reg = <0x8000 0x8000>;
+        label = "RAM (8000-FFFF)";
+    };
 };

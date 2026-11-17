@@ -15,7 +15,7 @@
                                 "activeView": "registerMonitor",
                                 "id": "2"
                             },
-                            "size": 686
+                            "size": 820
                         },
                         {
                             "type": "leaf",
@@ -27,7 +27,7 @@
                                 "activeView": "rct-canvas",
                                 "id": "3"
                             },
-                            "size": 474
+                            "size": 340
                         }
                     ],
                     "size": 340
@@ -78,7 +78,7 @@
                                                     "size": 249
                                                 }
                                             ],
-                                            "size": 535
+                                            "size": 540
                                         },
                                         {
                                             "type": "branch",
@@ -106,7 +106,7 @@
                                                     "size": 501
                                                 }
                                             ],
-                                            "size": 506
+                                            "size": 501
                                         }
                                     ],
                                     "size": 1171
@@ -192,10 +192,11 @@
                 "_componentName": "rct-code-view",
                 "colWidths": {
                     "addr": 47,
+                    "bp": 22,
                     "bytes": 81,
                     "label": 28,
                     "mnem": 61,
-                    "dest": 101,
+                    "dest": 121,
                     "src": 130,
                     "comment": 280
                 }
@@ -243,7 +244,7 @@
             "title": "RCT Stack"
         }
     },
-    "activeGroup": "8",
+    "activeGroup": "6",
     "_fbb_pane_state": {
         "tracer": {
             "selectedGroup": "ALL",
@@ -255,14 +256,14 @@
                 "vfpga_z80": true
             },
             "expandedGroups": {
-                "vfpga_z80_Control & Status": false
+                "vfpga_z80_Control & Status": true
             }
         },
         "hiddenTraceKeys": {
             "vfpga_z80_CTRL": true,
             "vfpga_z80_STATUS": true,
             "vfpga_z80_CMD": true,
-            "vfpga_z80_CYCLES": true,
+            "vfpga_z80_CYCLES": false,
             "vfpga_z80_PC": false,
             "vfpga_z80_SP": false,
             "vfpga_z80_AF": false,
