@@ -13,7 +13,7 @@
 
         ORG     0x0000
 
-STACK_TOP:  EQU 0x8000      ; Stack pointer initial address
+STACK_TOP:  EQU 0x0000      ; Stack at top of RAM (0x8000-0xFFFF, SP wraps to 0xFFFF on push)
 SRC_LEN:    EQU 16          ; Source data length in bytes
 STATUS_OK:  EQU 0x00
 STATUS_ERR: EQU 0xFF
@@ -171,10 +171,10 @@ SRC_DATA:
         DB      0x12, 0x34              ; Two singletons (1 x 0x12, 1 x 0x34)
         DB      0x7E, 0x7E, 0x7E, 0x7E, 0x7E, 0x7E ; Run of 6 x 0x7E
 
-        ORG     0x0300
+        ORG     0x8000          ; Work RAM: Compressed buffer (0x8000-0xFFFF)
 CMP_BUF:
         DS      32              ; Reserved space for compressed output
 
-        ORG     0x0400
+        ORG     0x8040          ; Work RAM: Decompressed buffer (0x8000-0xFFFF)
 DST_BUF:
         DS      32              ; Reserved space for decompressed output

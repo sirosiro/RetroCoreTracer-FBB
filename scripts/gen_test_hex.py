@@ -44,13 +44,13 @@ def generate_phase2_hex(output_path: str):
         0x3F,             # CCF            (C = 0)
         0x07,             # RLCA           (0x8A -> 0x15, C=1)
         0x0F,             # RRCA           (0x15 -> 0x8A, C=1)
-        0x32, 0x00, 0x01, # LD ($0100), A  (mem[0x0100] = 0x8A)
+        0x32, 0x00, 0x81, # LD ($8100), A  (mem[0x8100] = 0x8A in RAM)
         0x3E, 0x00,       # LD A, $00      (clear A)
-        0x3A, 0x00, 0x01, # LD A, ($0100)  (A = 0x8A)
-        0x26, 0x02,       # LD H, $02
-        0x2E, 0x00,       # LD L, $00      (HL = 0x0200)
-        0x36, 0x55,       # LD (HL), $55   (mem[0x0200] = 0x55)
-        0x34,             # INC (HL)       (mem[0x0200] = 0x56)
+        0x3A, 0x00, 0x81, # LD A, ($8100)  (A = 0x8A)
+        0x26, 0x82,       # LD H, $82
+        0x2E, 0x00,       # LD L, $00      (HL = 0x8200 in RAM)
+        0x36, 0x55,       # LD (HL), $55   (mem[0x8200] = 0x55)
+        0x34,             # INC (HL)       (mem[0x8200] = 0x56)
         0x7E,             # LD A, (HL)     (A = 0x56)
         0x76              # HALT
     ])
@@ -71,11 +71,11 @@ def generate_phase3_hex(output_path: str):
             0xC9              # 0032: RET
         ]),
         0x0040: bytearray([
-            0x31, 0x00, 0x10, # 0040: LD SP, $1000
+            0x31, 0x00, 0x00, # 0040: LD SP, $0000 (top of RAM 0x8000-0xFFFF)
             0x21, 0x34, 0x12, # 0043: LD HL, $1234
-            0x22, 0x80, 0x00, # 0046: LD ($0080), HL
+            0x22, 0x80, 0x80, # 0046: LD ($8080), HL (in RAM)
             0x21, 0x00, 0x00, # 0049: LD HL, $0000
-            0x2A, 0x80, 0x00, # 004C: LD HL, ($0080)
+            0x2A, 0x80, 0x80, # 004C: LD HL, ($8080)
             0x01, 0x11, 0x01, # 004F: LD BC, $0111
             0x09,             # 0052: ADD HL, BC
             0x03,             # 0053: INC BC
@@ -111,8 +111,8 @@ def generate_phase4_hex(output_path):
         0xCB, 0x48,       # 0014: BIT 1, B (bit1 of $6A is 1 -> Z=0, H=1)
         0xCB, 0xC0,       # 0016: SET 0, B -> $6B
         0xCB, 0x88,       # 0018: RES 1, B -> $69
-        # (HL) メモリアクセス検証
-        0x21, 0x00, 0x01, # 001A: LD HL, $0100
+        # (HL) メモリアクセス検証 (RAM領域 0x8100)
+        0x21, 0x00, 0x81, # 001A: LD HL, $8100
         0x36, 0x81,       # 001D: LD (HL), $81
         0xCB, 0x06,       # 001F: RLC (HL) -> (HL)=$03, C=1
         0xCB, 0x4E,       # 0021: BIT 1, (HL) -> Z=0, H=1
@@ -130,8 +130,8 @@ def generate_phase5_hex(output_path):
     code = bytes([
         # 1. 16-bit LD dd, (nn) / LD (nn), dd
         0x01, 0x34, 0x12,       # 0000: LD BC, $1234
-        0xED, 0x43, 0x80, 0x01, # 0003: LD ($0180), BC
-        0xED, 0x5B, 0x80, 0x01, # 0007: LD DE, ($0180) -> DE = $1234
+        0xED, 0x43, 0x80, 0x81, # 0003: LD ($8180), BC
+        0xED, 0x5B, 0x80, 0x81, # 0007: LD DE, ($8180) -> DE = $1234
         # 2. 16-bit ADC/SBC HL, ss
         0x21, 0x00, 0x10,       # 000B: LD HL, $1000
         0xAF,                   # 000E: XOR A (C=0)
@@ -146,7 +146,7 @@ def generate_phase5_hex(output_path):
         0xED, 0x57,             # 001D: LD A, I -> A = $42
         0xED, 0x56,             # 001F: IM 1
         # 4. RRD / RLD
-        0x21, 0x00, 0x02,       # 0021: LD HL, $0200
+        0x21, 0x00, 0x82,       # 0021: LD HL, $8200
         0x36, 0x34,             # 0024: LD (HL), $34
         0x3E, 0x12,             # 0026: LD A, $12
         0xED, 0x67,             # 0028: RRD -> A = $14, (HL) = $23
@@ -161,16 +161,16 @@ def generate_phase5_hex(output_path):
         0x06, 0x00,             # 0038: LD B, $00
         0xED, 0x40,             # 003A: IN B, (C) -> B = $88
         # 6. Block Copy LDIR
-        0x21, 0x00, 0x03,       # 003C: LD HL, $0300
+        0x21, 0x00, 0x83,       # 003C: LD HL, $8300
         0x36, 0xAA,             # 003F: LD (HL), $AA
         0x23,                   # 0041: INC HL
         0x36, 0xBB,             # 0042: LD (HL), $BB
-        0x21, 0x00, 0x03,       # 0044: LD HL, $0300
-        0x11, 0x10, 0x03,       # 0047: LD DE, $0310
+        0x21, 0x00, 0x83,       # 0044: LD HL, $8300
+        0x11, 0x10, 0x83,       # 0047: LD DE, $8310
         0x01, 0x02, 0x00,       # 004A: LD BC, $0002
-        0xED, 0xB0,             # 004D: LDIR -> copies $AA, $BB to $0310
+        0xED, 0xB0,             # 004D: LDIR -> copies $AA, $BB to $8310
         # 7. Block Search CPIR
-        0x21, 0x10, 0x03,       # 004F: LD HL, $0310
+        0x21, 0x10, 0x83,       # 004F: LD HL, $8310
         0x01, 0x02, 0x00,       # 0052: LD BC, $0002
         0x3E, 0xBB,             # 0055: LD A, $BB
         0xED, 0xB1,             # 0057: CPIR -> finds $BB, stops with Z=1
@@ -180,22 +180,22 @@ def generate_phase5_hex(output_path):
 
 def generate_phase6_hex(output_path):
     code = bytearray([
-        # 1. 16-bit IX / IY operations
-        0xDD, 0x21, 0x00, 0x20, # 0000: LD IX, $2000
+        # 1. 16-bit IX / IY operations (RAM address 0x8000)
+        0xDD, 0x21, 0x00, 0x80, # 0000: LD IX, $8000
         0x01, 0x50, 0x00,       # 0004: LD BC, $0050
-        0xDD, 0x09,             # 0007: ADD IX, BC -> IX = $2050
-        0xDD, 0x23,             # 0009: INC IX -> IX = $2051
-        0xDD, 0x2B,             # 000B: DEC IX -> IX = $2050
-        0xDD, 0x22, 0x80, 0x01, # 000D: LD ($0180), IX
-        0xFD, 0x2A, 0x80, 0x01, # 0011: LD IY, ($0180) -> IY = $2050
+        0xDD, 0x09,             # 0007: ADD IX, BC -> IX = $8050
+        0xDD, 0x23,             # 0009: INC IX -> IX = $8051
+        0xDD, 0x2B,             # 000B: DEC IX -> IX = $8050
+        0xDD, 0x22, 0x80, 0x81, # 000D: LD ($8180), IX
+        0xFD, 0x2A, 0x80, 0x81, # 0011: LD IY, ($8180) -> IY = $8050
 
-        # 2. Indexed Memory Access (IX+d) & (IY+d)
-        0xDD, 0x36, 0x04, 0xAA, # 0015: LD (IX+$04), $AA -> ($2054) = $AA
+        # 2. Indexed Memory Access (IX+d) & (IY+d) in RAM
+        0xDD, 0x36, 0x04, 0xAA, # 0015: LD (IX+$04), $AA -> ($8054) = $AA
         0xDD, 0x7E, 0x04,       # 0019: LD A, (IX+$04) -> A = $AA
-        0xDD, 0x34, 0x04,       # 001C: INC (IX+$04) -> ($2054) = $AB
+        0xDD, 0x34, 0x04,       # 001C: INC (IX+$04) -> ($8054) = $AB
         0xDD, 0x46, 0x04,       # 001F: LD B, (IX+$04) -> B = $AB
         0xDD, 0x86, 0x04,       # 0022: ADD A, (IX+$04) -> A = $AA + $AB = $55 (C=1)
-        0xFD, 0x36, 0xFE, 0x33, # 0025: LD (IY-$02), $33 -> ($204E) = $33
+        0xFD, 0x36, 0xFE, 0x33, # 0025: LD (IY-$02), $33 -> ($804E) = $33
         0xFD, 0x4E, 0xFE,       # 0029: LD C, (IY-$02) -> C = $33
 
         # 3. 8-bit IXH / IXL register access
@@ -204,17 +204,18 @@ def generate_phase6_hex(output_path):
         0xDD, 0x7C,             # 0032: LD A, IXH -> A = $5A
         0xDD, 0x45,             # 0034: LD B, IXL -> B = $C3
 
-        # 4. 4-byte DDCB operations on (IX+d)
-        0xDD, 0xCB, 0x04, 0xFE, # 0036: SET 7, (IX+$04) -> ($2054) bit 7 = 1
-        0xDD, 0xCB, 0x04, 0x7E, # 003A: BIT 7, (IX+$04) -> Z = 0
-        0xDD, 0xCB, 0x04, 0xBE, # 003E: RES 7, (IX+$04) -> ($2054) bit 7 = 0
-        0xDD, 0xCB, 0x04, 0x7E, # 0042: BIT 7, (IX+$04) -> Z = 1
+        # 4. 4-byte DDCB operations on (IX+d) in RAM
+        0xDD, 0x21, 0x50, 0x80, # 0036: LD IX, $8050
+        0xDD, 0xCB, 0x04, 0xFE, # 003A: SET 7, (IX+$04) -> ($8054) bit 7 = 1
+        0xDD, 0xCB, 0x04, 0x7E, # 003E: BIT 7, (IX+$04) -> Z = 0
+        0xDD, 0xCB, 0x04, 0xBE, # 0042: RES 7, (IX+$04) -> ($8054) bit 7 = 0
+        0xDD, 0xCB, 0x04, 0x7E, # 0046: BIT 7, (IX+$04) -> Z = 1
 
         # 5. Stack PUSH / POP IX / IY
-        0x31, 0x00, 0x10,       # 0046: LD SP, $1000
-        0xDD, 0xE5,             # 0049: PUSH IX -> pushes $5AC3 to stack
-        0xFD, 0xE1,             # 004B: POP IY -> IY = $5AC3
-        0x76                    # 004D: HALT
+        0x31, 0x00, 0x00,       # 004A: LD SP, $0000 (top of RAM 0x8000-0xFFFF)
+        0xDD, 0xE5,             # 004D: PUSH IX -> pushes $8050 to stack
+        0xFD, 0xE1,             # 004F: POP IY -> IY = $8050
+        0x76                    # 0051: HALT
     ])
     write_intel_hex(output_path, {0x0000: code})
 
@@ -229,12 +230,12 @@ def generate_phase7_hex(output_path):
         0x3F,                   # 0007: CCF (Clear Carry)
 
         # --- Part 2: Phase 3 Stack, 16-bit & Subroutine ---
-        0x31, 0x00, 0x10,       # 0008: LD SP, $1000
+        0x31, 0x00, 0x00,       # 0008: LD SP, $0000 (top of RAM 0x8000-0xFFFF)
         0x21, 0x34, 0x12,       # 000B: LD HL, $1234
-        0xE5,                   # 000E: PUSH HL -> ($0FFE)=$34, ($0FFF)=$12
+        0xE5,                   # 000E: PUSH HL -> ($FFFE)=$34, ($FFFF)=$12 in RAM
         0x01, 0x78, 0x56,       # 000F: LD BC, $5678
-        0xC5,                   # 0012: PUSH BC -> ($0FFC)=$78, ($0FFD)=$56
-        0xE3,                   # 0013: EX (SP), HL -> HL = $5678, ($0FFC)=$34, ($0FFD)=$12
+        0xC5,                   # 0012: PUSH BC -> ($FFFC)=$78, ($FFFD)=$56 in RAM
+        0xE3,                   # 0013: EX (SP), HL -> HL = $5678, ($FFFC)=$34, ($FFFD)=$12
         0xD1,                   # 0014: POP DE -> DE = $1234
         0xC1,                   # 0015: POP BC -> BC = $1234
         0xCD, 0x55, 0x00,       # 0016: CALL $0055 (subroutine)
@@ -246,24 +247,24 @@ def generate_phase7_hex(output_path):
         0xCB, 0xB8,             # 001F: RES 7, B
         0xCB, 0xF8,             # 0021: SET 7, B
 
-        # --- Part 4: Phase 5 ED Block Transfer & Search ---
-        0x21, 0x00, 0x02,       # 0023: LD HL, $0200
+        # --- Part 4: Phase 5 ED Block Transfer & Search in RAM ---
+        0x21, 0x00, 0x82,       # 0023: LD HL, $8200
         0x36, 0xDE,             # 0026: LD (HL), $DE
         0x23,                   # 0028: INC HL
         0x36, 0xAD,             # 0029: LD (HL), $AD
-        0x21, 0x00, 0x02,       # 002B: LD HL, $0200
-        0x11, 0x10, 0x02,       # 002E: LD DE, $0210
+        0x21, 0x00, 0x82,       # 002B: LD HL, $8200
+        0x11, 0x10, 0x82,       # 002E: LD DE, $8210
         0x01, 0x02, 0x00,       # 0031: LD BC, $0002
-        0xED, 0xB0,             # 0034: LDIR -> copies $DE, $AD to $0210
+        0xED, 0xB0,             # 0034: LDIR -> copies $DE, $AD to $8210 in RAM
         0x3E, 0x05,             # 0036: LD A, $05
         0xED, 0x44,             # 0038: NEG -> A = $FB
 
-        # --- Part 5: Phase 6 DD/FD IX/IY & DDCB Operations ---
-        0xDD, 0x21, 0x00, 0x30, # 003A: LD IX, $3000
-        0xDD, 0x36, 0x08, 0x55, # 003E: LD (IX+$08), $55
-        0xDD, 0xCB, 0x08, 0xFE, # 0042: SET 7, (IX+$08) -> ($3008)=$D5
+        # --- Part 5: Phase 6 DD/FD IX/IY & DDCB Operations in RAM ---
+        0xDD, 0x21, 0x00, 0x90, # 003A: LD IX, $9000
+        0xDD, 0x36, 0x08, 0x55, # 003E: LD (IX+$08), $55 -> ($9008) = $55
+        0xDD, 0xCB, 0x08, 0xFE, # 0042: SET 7, (IX+$08) -> ($9008)=$D5
         0xDD, 0x7E, 0x08,       # 0046: LD A, (IX+$08) -> A = $D5
-        0xFD, 0x21, 0x08, 0x30, # 0049: LD IY, $3008
+        0xFD, 0x21, 0x08, 0x90, # 0049: LD IY, $9008
         0xFD, 0x7E, 0x00,       # 004D: LD A, (IY+$00) -> A = $D5
         0xC3, 0x5A, 0x00,       # 0050: JP $005A
         0x00, 0x00,             # 0053: NOP padding

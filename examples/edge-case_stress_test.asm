@@ -17,7 +17,7 @@
 
         ORG     0x0000
 
-STACK_TOP   EQU 0x8000
+STACK_TOP   EQU 0x0000          ; Stack at top of RAM (0x8000-0xFFFF, SP wraps to 0xFFFF on push)
 STATUS_OK   EQU 0x00
 STATUS_ERR  EQU 0xFF
 
@@ -251,9 +251,9 @@ BYTECODE_PROG:
         DB      0x05                ; HALT_VM
 
 ; ============================================================================
-; VM Context Work Area
+; VM Context Work Area (in Work RAM)
 ; ============================================================================
-        ORG     0x0300
+        ORG     0x8000          ; Work RAM (0x8000-0xFFFF)
 
 VM_CTX:
         DS      6                   ; [PC_L, PC_H, ACC_L, ACC_H, FLAGS, BCD]

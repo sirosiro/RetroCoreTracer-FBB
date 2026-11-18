@@ -18,6 +18,14 @@
       "cmd": "fbb lab {PLUGIN_DIR}/scenario/ examples/rle_codec.asm"
     },
     {
+      "desc": "Launch Interactive Studio with Edge-Case Stress Test ASM (Listing Mode)",
+      "cmd": "fbb lab {PLUGIN_DIR}/scenario/ examples/edge-case_stress_test.asm"
+    },
+    {
+      "desc": "Launch Interactive Studio with Bus Violation & Protection Test ASM",
+      "cmd": "fbb lab {PLUGIN_DIR}/scenario/ examples/bus_violation_test.asm"
+    },
+    {
       "desc": "Launch Interactive Studio with Full ISA Showcase Demo",
       "cmd": "fbb lab {PLUGIN_DIR}/scenario/ examples/z80_test_07_full_isa_showcase.hex"
     },
